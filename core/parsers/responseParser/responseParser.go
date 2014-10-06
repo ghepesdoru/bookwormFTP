@@ -19,6 +19,7 @@ var (
 	ERR_EmptyInput = fmt.Errorf("Empty response.")
 	ERR_InvalidFormat = fmt.Errorf("Invalid line format.")
 	ERR_InvalidStatus = fmt.Errorf("Invalid response line status. Wrongfully formatted multiple lines?")
+	ERRF_ErrorParsing = "Parsing error: Error parsing input bytes: %s."
 )
 
 /* Parser type definition */
@@ -45,7 +46,7 @@ func (r *Parser) ParseBlock(block []byte) {
 
 		if err != nil {
 			if err != ERR_EmptyInput {
-				fmt.Println("Error while parsing: ", err)
+				fmt.Println(fmt.Errorf(ERRF_ErrorParsing, err))
 				r.errors = append(r.errors, &err)
 			}
 		} else {

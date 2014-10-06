@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"net/url"
 	"strings"
 	Commands "github.com/ghepesdoru/bookwormFTP/core/commands"
@@ -24,6 +25,7 @@ const (
 	CONST_DefaultResponse = ""
 	CONST_EmptyString	= ""
 	CONST_CommandRetries= 3
+	CONST_DataPort	 	= -1
 
 	/* Connection option names */
 	OPT_Connected 		= "connected"
@@ -31,6 +33,8 @@ const (
 	OPT_InitialPath 	= "initial_path"
 	OPT_Disconnected 	= "disconnected"
 	OPT_Authenticated 	= "logged_in"
+	OPT_DataPort		= "client_data_port"
+	OPT_PassiveMode		= "passive"
 )
 
 /* Default errors definition */
@@ -44,6 +48,7 @@ var (
 	ERR_ReinNotImplemented	 = fmt.Errorf("Server state reinitialization not supported. (REIN)")
 	ERR_NoServerFeatures	 = fmt.Errorf("Server supported features unavailable.")
 	ERR_NoPWDResult			 = fmt.Errorf("Could not determine the current working directory path.")
+	ERR_InvalidListCommand	 = fmt.Errorf("Unable to list requested content. Please consider putting the client in passive mode or providing a client port.")
 
 	/* Error formats */
 	ERRF_InvalidCommandName = "Command error: Unrecognized command %s."
@@ -51,11 +56,19 @@ var (
 	ERRF_InvalidCommandOutOfSequence = "Command error: %s could not complete. Use a sequence for fequential commands. Intermediary status: %d, message: %s"
 	ERRF_CommandMaxRetries = "Command error: %s reached the maximum number of retries. Transient Negative Completion reply status %d, message: %s"
 	ERRF_CommandFailure = "Command failure: %d %s"
+	ERRF_MissingPortInHost = "missing port in address"
+)
+
+/* Other global declarations */
+var (
+	MatchHostAndPort = regexp.MustCompilePOSIX(`([0-9]{1,3}+,){5}+[0-9]{1,3}`)
+	/* Matches a passive/port command address: ipv4,port (4 x 8bit + 2 x 8bit) */
 )
 
 /* BookwormFTP Client type definition */
 type Client struct {
 	connection net.Conn
+	dataConn net.Conn
 	reader *Reader.Reader
 	credentials *Credentials.Credentials
 	settings *Settings.Settings
@@ -88,6 +101,8 @@ func NewClient(address string) (client *Client, err error) {
 														   once the client navigates to the specified path at
 														   client creation time */
 		Settings.NewOption(OPT_Authenticated, false),	/* A user is currently authenticated */
+		Settings.NewOption(OPT_PassiveMode, false), 	/* Client is not in passive mode at connection time */
+		Settings.NewOption(OPT_DataPort, CONST_DataPort), /* Register a default invalid data port */
 	)
 
 	/* Extract the url parts */
@@ -98,7 +113,6 @@ func NewClient(address string) (client *Client, err error) {
 		return
 	}
 
-	/* Use default port for addresses not specifying one */
 	if !strings.Contains(urlData.Host, ":") {
 		host = fmt.Sprintf("%s:%d", urlData.Host, CONST_ServerPort)
 	} else {
@@ -133,7 +147,7 @@ func NewClient(address string) (client *Client, err error) {
 	settings.Get(OPT_Connected).Set(true)
 
 	/* Instantiate the new client */
-	client = &Client{conn, Reader.NewReader(conn), credentials, settings}
+	client = &Client{conn, nil, Reader.NewReader(conn), credentials, settings}
 
 	/* Grab server greeting, and check for server ready status */
 	welcomeMessage, _ := client.getResponse()
@@ -389,13 +403,19 @@ func (c *Client) ChangeDirectory(path string) (ok bool, err error) {
 	return
 }
 
+/* Delete the specified file on the remote server */
+func (c *Client) DeleteFile(fileName string) (ok bool, err error) {
+	ok, err, _ = c.Request(NewCommand("dele", fileName, Status.FileActionOk))
+	return
+}
+
 /* Disconnect Command functionality */
 func (c *Client) Disconnect() (quitMessage string, err error) {
 	var ok bool
-	ok, err, quitMessage = c.Request(NewCommand("quit", "", Status.ClosingControlConnection))
+	ok, err, quitMessage = c.Request(NewCommand("quit", CONST_EmptyString, Status.ClosingControlConnection))
 
 	if ok {
-		/* Notify the server deconnection */
+		/* Notify the server disconnection */
 		c.settings.Get(OPT_Disconnected).Set(true)
 		c.settings.Get(OPT_ServerReady).Reset()
 		c.settings.Get(OPT_Authenticated).Reset()
@@ -451,6 +471,78 @@ func (c *Client) Features() (features map[string]string, err error) {
 
 	if len(features) == 0 {
 		err = ERR_NoServerFeatures
+		ok = false
+	}
+
+	return
+}
+
+/* Request help from the server */
+func (c *Client) Help() (helpMessage string, err error) {
+	_, err, helpMessage = c.Request(NewCommand("help", CONST_EmptyString, Status.HelpMessage))
+	return
+}
+
+/* Request help for a specific command */
+func (c *Client) HelpWith(command string) (helpMessage string, err error) {
+	_, err, helpMessage = c.Request(NewCommand("help", command, Status.HelpMessage))
+	return
+}
+
+func (c *Client) List() (list string, err error) {
+	var port, pasv bool = true, true
+	if c.settings.Get(OPT_DataPort).Is(CONST_DataPort) {
+		/* No client port was specified */
+		port = false
+	}
+
+	if c.settings.Get(OPT_PassiveMode).Is(false) {
+		/* The client connection is not in passive mode */
+		pasv = false
+	}
+
+	if port || pasv {
+		/* Execute the list command if possible in the current context */
+		_, err, list = c.Request(NewCommand("list", "/ripe", 0))
+		fmt.Println("Enters here!!!")
+	} else {
+		/* Invalid command in current context */
+		err = ERR_InvalidListCommand
+	}
+
+	return
+}
+
+/* Puts the client in passive mode */
+func (c *Client) ToPassiveMode() (ok bool, err error) {
+	if (c.settings.Get(OPT_PassiveMode).Is(true)) {
+		/* Client in passive mode, ignore the new request */
+		return true, err
+	}
+
+	var r string
+	ok, err, r = c.Request(NewCommand("pasv", CONST_EmptyString, Status.PassiveMode))
+
+	if ok {
+		/* Extract the server address and port */
+		aux := MatchHostAndPort.FindString(r)
+		p := strings.Split(aux, ",")
+
+		if len(p) == 6 {
+			fmt.Println("connecting to: ",  strings.Join(p[0:4], ".") + ":" + strings.Join(p[4:], ""))
+			c.dataConn, err = net.Dial("tcp", strings.Join(p[0:4], ".") + ":" + strings.Join(p[4:], ""))
+
+			if err == nil {
+				/* Mark the connection as being in passive mode */
+				c.settings.Get(OPT_PassiveMode).Set(true)
+			}
+		} else {
+			/* Error case. TODO: Continue */
+			err = fmt.Errorf("Invalid server address and port for establishing data connection.")
+		}
+	}
+
+	if err != nil {
 		ok = false
 	}
 

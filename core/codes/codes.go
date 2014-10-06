@@ -1,9 +1,5 @@
 package codes
 
-import (
-	"fmt"
-)
-
 /**
 Replay codes definition
 */
@@ -89,24 +85,6 @@ var KnownStatusCodes map[int]bool = map[int]bool {
 	10000: true, 10054: true, 10060: true, 10061: true, 10066: true, 10068: true,
 }
 
-/* Standard errors for generic failures */
-var StdErr5xy map[int]error = map[int]error {
-	500: fmt.Errorf("Syntax error, command unrecognized. This may include errors such as command line too long."),
-	501: fmt.Errorf("Syntax error in parameters or arguments."),
-	502: fmt.Errorf("Command not implemented."),
-	503: fmt.Errorf("Bad sequence of commands."),
-	504: fmt.Errorf("Command not implemented for that parameter."),
-	530: fmt.Errorf("Not logged in."),
-	532: fmt.Errorf("Need account for storing files."),
-	550: fmt.Errorf("Requested action not taken. File unavailable (e.g., file not found, no access)."),
-	551: fmt.Errorf("Requested action aborted. Page type unknown."),
-	552: fmt.Errorf("Requested file action aborted. Exceeded storage allocation (for current directory or dataset)."),
-	553: fmt.Errorf("Requested action not taken. File name not allowed."),
-}
-
-// TODO: De impartit statusurile in grupuri. Trebuie sa execut actiuni in baza lor! (sa reincerc, sa opres un proces etc)
-
-
 /* Map of byte values to numeric counterparts */
 var Numbers map[byte]int = map[byte]int {
 	48: 0, 49: 1, 50: 2, 51: 3, 52: 4, 53: 5, 54: 6, 55: 7, 56: 8, 57: 9,
@@ -119,22 +97,6 @@ func IsValid (status int) bool {
 	}
 
 	return false
-}
-
-/* Checks if the current status represents a failure case */
-func IsFailureCase (status int) bool {
-	return status >= 500 && status < 600
-}
-
-/* Returns an error for the specified failure status */
-func StandardFailureErr (status int) (err error) {
-	if IsFailureCase(status) {
-		if StdErr5xy[status] != nil {
-			return StdErr5xy[status]
-		}
-	}
-
-	return nil
 }
 
 /* Checks if the given argument can represent a valid number */

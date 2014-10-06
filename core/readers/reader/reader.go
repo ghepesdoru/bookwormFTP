@@ -173,7 +173,7 @@ func (r *Reader) listen() {
 				break
 
 			default:
-				fmt.Println("Uncaught signal: ", sig)
+				fmt.Println(fmt.Errorf("Uncaught signal: %d", sig))
 				break
 			}
 			break
