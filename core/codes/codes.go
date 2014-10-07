@@ -76,7 +76,7 @@ const (
 /* Defines a map of known reply codes */
 var KnownStatusCodes map[int]bool = map[int]bool {
 	110: true, 120: true, 125: true, 150: true,
-	202: true, 211: true, 212: true, 213: true, 214: true, 215: true, 220: true, 221: true, 225: true,
+	200: true, 202: true, 211: true, 212: true, 213: true, 214: true, 215: true, 220: true, 221: true, 225: true,
 	226: true, 227: true, 228: true, 229: true, 230: true, 231: true, 232: true, 250: true, 257: true,
 	331: true, 332: true, 350: true,
 	421: true, 425: true, 426: true, 430: true, 434: true, 450: true, 451: true, 452: true,

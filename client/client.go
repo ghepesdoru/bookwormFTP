@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strconv"
 	"net/url"
 	"strings"
 	Commands "github.com/ghepesdoru/bookwormFTP/core/commands"
@@ -26,6 +27,7 @@ const (
 	CONST_EmptyString	= ""
 	CONST_CommandRetries= 3
 	CONST_DataPort	 	= -1
+	CONST_Comma			= ","
 
 	/* Connection option names */
 	OPT_Connected 		= "connected"
@@ -44,11 +46,13 @@ var (
 	ERR_UnconsumedResponses	 = fmt.Errorf("Acumulation of unconsummed responses from the server.")
 	ERR_NoServerResponse	 = fmt.Errorf("Response error: Unable to fetch a response from server at this time.")
 	ERR_RestartSequence		 = fmt.Errorf("Restart sequence.")
-	ERR_ServerNotReady		 = fmt.Errorf("Server is not connected/disconnected or otherwise unavailable.")
+	ERR_ServerNotReady		 = fmt.Errorf("Server is disconnected or otherwise unavailable.")
 	ERR_ReinNotImplemented	 = fmt.Errorf("Server state reinitialization not supported. (REIN)")
 	ERR_NoServerFeatures	 = fmt.Errorf("Server supported features unavailable.")
 	ERR_NoPWDResult			 = fmt.Errorf("Could not determine the current working directory path.")
 	ERR_InvalidListCommand	 = fmt.Errorf("Unable to list requested content. Please consider putting the client in passive mode or providing a client port.")
+	ERR_InvalidIpAndPortRepr = fmt.Errorf("Invalid ip and port representation. Expected ip8bit,ip8bit,ip8bit,ip8bit,port8bit,port8bit")
+	ERR_InvalidDataConn		 = fmt.Errorf("Unable to establish a data link with the remote server.")
 
 	/* Error formats */
 	ERRF_InvalidCommandName = "Command error: Unrecognized command %s."
@@ -92,14 +96,12 @@ func NewClient(address string) (client *Client, err error) {
 	var host string
 	var credentials *Credentials.Credentials
 	var conn net.Conn
+	var authenticate, ok bool = true, false
 	var settings *Settings.Settings = Settings.NewSettings(
 		/* Define current connection settings with default values */
 		Settings.NewOption(OPT_Connected, false),		/* There is a connection to the host */
 		Settings.NewOption(OPT_ServerReady, false),		/* The server send it's welcome message? */
 		Settings.NewOption(OPT_Disconnected, false),	/* A QUIT command was called? */
-		Settings.NewOption(OPT_InitialPath, "/"),		/* Url specified initial path - will be deleted
-														   once the client navigates to the specified path at
-														   client creation time */
 		Settings.NewOption(OPT_Authenticated, false),	/* A user is currently authenticated */
 		Settings.NewOption(OPT_PassiveMode, false), 	/* Client is not in passive mode at connection time */
 		Settings.NewOption(OPT_DataPort, CONST_DataPort), /* Register a default invalid data port */
@@ -132,6 +134,9 @@ func NewClient(address string) (client *Client, err error) {
 	if credentials == nil || err == Credentials.ERR_UsernameToShort {
 		/* Create anonymous credentials */
 		credentials, _ = Credentials.NewCredentials(CONST_DefaultUser, CONST_DefaultPass)
+
+		/* No custom credentials whare delivered. Do not authenticate at this time */
+		authenticate = false
 	}
 
 	/* Remember the initially requested path */
@@ -158,7 +163,23 @@ func NewClient(address string) (client *Client, err error) {
 		}
 	}
 
-	// TODO: Change working directory to the specified path
+	/* Authenticate with the provided user and password if the server address contained a user and password */
+	if authenticate {
+		ok, err = client.Authenticate(client.credentials)
+
+		if ok {
+			/* Authenticated. Navigate to the specified path (if any) */
+			if urlData.Path != CONST_EmptyString {
+				_, err = client.ChangeDirectory(urlData.Path)
+				client.settings.Add(OPT_InitialPath, CONST_EmptyString)
+			}
+		}
+	} else {
+		/* Manual authentication at a later time. Remember the specified path (if any) */
+		if urlData.Path != CONST_EmptyString {
+			client.settings.Add(OPT_InitialPath, CONST_EmptyString).Set(urlData.Path)
+		}
+	}
 
 	return
 }
@@ -343,6 +364,37 @@ func (c *Client) sequence(commands []*Command) (ok bool, err error) {
 	return
 }
 
+/* Given a passive connection replay, extract a TCPAddr structure containing the ip and port that the data connection will use */
+func (c *Client) extractDataAddress (dataPortMessage string) (addr *net.TCPAddr, err error) {
+	var port int = -1
+	ipAndPort := MatchHostAndPort.FindString(dataPortMessage)
+	parts := strings.Split(ipAndPort, CONST_Comma)
+
+	if len(parts) == 6 {
+		p1, e1 := strconv.Atoi(parts[4])
+		p2, e2 := strconv.Atoi(parts[5])
+
+		if e1 == nil && e1 == nil {
+			port = p1 * 256 + p2
+		} else if e1 != nil {
+			/* Error while parsing port part 1 */
+			err = e1
+		} else {
+			/* Error while parsing port part 2 */
+			err = e2
+		}
+	} else {
+		/* Insuficcient data to determine the port part of a data connection port response */
+		err = ERR_InvalidIpAndPortRepr
+	}
+
+	if port != -1 {
+		addr = &net.TCPAddr{net.ParseIP(strings.Join(parts[:4], ".")), port, ""}
+	}
+
+	return
+}
+
 /* Make a request to the server */
 func (c *Client) Request(command *Command) (ok bool, err error, rMessage string) {
 	return c.execute(command, false, true, CONST_CommandRetries)
@@ -392,6 +444,15 @@ func (c *Client) Authenticate(credentials *Credentials.Credentials) (ok bool, er
 	if ok {
 		/* Notify user authenticated */
 		c.settings.Get(OPT_Authenticated).Set(true)
+
+		/* Check if there is any initial path to navigate to */
+		if !c.settings.Get(OPT_InitialPath).Is(CONST_EmptyString) {
+			/* Ignore errors, this is not an authentication problem */
+			_, _ = c.ChangeDirectory(c.settings.Get(OPT_InitialPath).ToString())
+
+			/* Reset the initial path to it's default value (empty string) */
+			c.settings.Get(OPT_InitialPath).Reset()
+		}
 	}
 
 	return
@@ -489,6 +550,13 @@ func (c *Client) HelpWith(command string) (helpMessage string, err error) {
 	return
 }
 
+/* Request the server a ready response to keep alive the connection (NOOP) */
+func (c *Client) NoOP() (ok bool, err error) {
+	ok, err, _ = c.Request(NewCommand("noop", CONST_EmptyString, Status.PositiveCompletion))
+	return
+}
+
+/* List the contents of the current directory */
 func (c *Client) List() (list string, err error) {
 	var port, pasv bool = true, true
 	if c.settings.Get(OPT_DataPort).Is(CONST_DataPort) {
@@ -504,17 +572,19 @@ func (c *Client) List() (list string, err error) {
 	if port || pasv {
 		/* Execute the list command if possible in the current context */
 		_, err, list = c.Request(NewCommand("list", "/ripe", 0))
-		fmt.Println("Enters here!!!")
 	} else {
 		/* Invalid command in current context */
 		err = ERR_InvalidListCommand
 	}
+
+	// TODO: Continue, grab data from the data connection once the current request finishes
 
 	return
 }
 
 /* Puts the client in passive mode */
 func (c *Client) ToPassiveMode() (ok bool, err error) {
+	var hostAddress *net.TCPAddr
 	if (c.settings.Get(OPT_PassiveMode).Is(true)) {
 		/* Client in passive mode, ignore the new request */
 		return true, err
@@ -525,20 +595,19 @@ func (c *Client) ToPassiveMode() (ok bool, err error) {
 
 	if ok {
 		/* Extract the server address and port */
-		aux := MatchHostAndPort.FindString(r)
-		p := strings.Split(aux, ",")
+		hostAddress, err = c.extractDataAddress(r)
 
-		if len(p) == 6 {
-			fmt.Println("connecting to: ",  strings.Join(p[0:4], ".") + ":" + strings.Join(p[4:], ""))
-			c.dataConn, err = net.Dial("tcp", strings.Join(p[0:4], ".") + ":" + strings.Join(p[4:], ""))
+		if err == nil {
+			/* Establish data connection */
+			c.dataConn, err = net.DialTCP("tcp", nil, hostAddress)
 
+			/* Mark the connection as being in passive mode */
 			if err == nil {
-				/* Mark the connection as being in passive mode */
 				c.settings.Get(OPT_PassiveMode).Set(true)
+			} else {
+				/* Error connecting to remote server on data link */
+				err = ERR_InvalidDataConn
 			}
-		} else {
-			/* Error case. TODO: Continue */
-			err = fmt.Errorf("Invalid server address and port for establishing data connection.")
 		}
 	}
 

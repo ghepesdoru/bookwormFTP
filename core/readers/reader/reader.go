@@ -86,6 +86,11 @@ func (r *Reader) GetError() error {
 	return *r.lastError
 }
 
+/* Stops the reader from reading any other input, as soon as possible */
+func (r *Reader) StopReading() {
+	r.connAvailable = false
+}
+
 /* Raw data getter, supports a number of failures and imposes delays */
 func (r *Reader) getRaw(n int) []byte {
 	if n < READING_ACCEPTED_FAILURES {
@@ -120,6 +125,7 @@ func (r *Reader) listen() {
 					r.active = true
 
 					go func() {
+//						fmt.Println("Connection opened")
 						for r.connAvailable && r.active {
 							data := make([]byte, MAX_RESPONSE_SIZE)
 
@@ -136,13 +142,14 @@ func (r *Reader) listen() {
 								return
 							} else if n > 0 {
 								/* Forward data throw data channel */
-								r.dataChannel <- data
+								r.dataChannel <- data[:n]
 
 								/* The reader read some data or encountered an error, notify */
 								r.controlChannel <- SIG_DataRead
 								<- r.controlChannel
 							}
 						}
+//						fmt.Println("Connection closed or otherwise unavailable")
 					}();
 				}
 

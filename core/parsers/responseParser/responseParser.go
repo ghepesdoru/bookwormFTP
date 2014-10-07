@@ -3,7 +3,6 @@ package responseParser
 import(
 	StatusCodes "github.com/ghepesdoru/bookwormFTP/core/codes"
 	"github.com/ghepesdoru/bookwormFTP/core/response"
-	"bytes"
 	"fmt"
 )
 
@@ -38,8 +37,6 @@ func (r *Parser) ParseBlock(block []byte) {
 	var resp *response.Response
 	var err error
 
-	block = bytes.TrimSpace(block)
-
 	for length > 0 {
 		resp, consumed, err = r.parse(block)
 		length -= consumed
@@ -51,6 +48,10 @@ func (r *Parser) ParseBlock(block []byte) {
 			}
 		} else {
 			r.responses = append(r.responses, resp)
+		}
+
+		if consumed == 0 {
+			break
 		}
 
 		/* Reduce the parsed block with the parsed quantity */
@@ -160,7 +161,7 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 							rawContent = append(rawContent, line[charConsumed:]...)
 							rawContent = append(rawContent, CONST_NewLine)
 						} else {
-							fmt.Println(string(line))
+							fmt.Println("Invalid status line:", string(line), status)
 							err = ERR_InvalidStatus
 						}
 					}
