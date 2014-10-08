@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"net"
+	"time"
 	"regexp"
 	"strconv"
 	"net/url"
@@ -28,6 +29,7 @@ const (
 	CONST_CommandRetries= 3
 	CONST_DataPort	 	= -1
 	CONST_Comma			= ","
+	CONST_EPRTGlue		= "|"
 
 	/* Connection option names */
 	OPT_Connected 		= "connected"
@@ -37,6 +39,7 @@ const (
 	OPT_Authenticated 	= "logged_in"
 	OPT_DataPort		= "client_data_port"
 	OPT_PassiveMode		= "passive"
+	OPT_ExtendedPassive = "extended_passive"
 )
 
 /* Default errors definition */
@@ -53,6 +56,7 @@ var (
 	ERR_InvalidListCommand	 = fmt.Errorf("Unable to list requested content. Please consider putting the client in passive mode or providing a client port.")
 	ERR_InvalidIpAndPortRepr = fmt.Errorf("Invalid ip and port representation. Expected ip8bit,ip8bit,ip8bit,ip8bit,port8bit,port8bit")
 	ERR_InvalidDataConn		 = fmt.Errorf("Unable to establish a data link with the remote server.")
+	ERR_InvalidTimeVal		 = fmt.Errorf("Invalid time-val representation.")
 
 	/* Error formats */
 	ERRF_InvalidCommandName = "Command error: Unrecognized command %s."
@@ -65,14 +69,35 @@ var (
 
 /* Other global declarations */
 var (
-	MatchHostAndPort = regexp.MustCompilePOSIX(`([0-9]{1,3}+,){5}+[0-9]{1,3}`)
 	/* Matches a passive/port command address: ipv4,port (4 x 8bit + 2 x 8bit) */
+	MatchHostAndPort 	= regexp.MustCompilePOSIX(`([0-9]{1,3}+,){5}+[0-9]{1,3}`)
+	/* Matches the port portion of the EPSV reply format |||port| */
+	MatchEPSVPort		= regexp.MustCompilePOSIX(`([0-9]{1,5})`)
+	/* Matches languages in the FEAT command reply */
+	MatchFEATLanguages  = regexp.MustCompilePOSIX(`LANG ([a-zA-Z\*;]+)`)
+
+	/* Translation map from int to time.Month */
+	IntToMonth 			= map[int]time.Month {
+		1: 	time.January,
+		2: 	time.February,
+		3: 	time.March,
+		4: 	time.April,
+		5: 	time.May,
+		6: 	time.June,
+		7: 	time.July,
+		8: 	time.August,
+		9: 	time.September,
+		10:	time.October,
+		11:	time.November,
+		12:	time.December,
+	}
 )
 
 /* BookwormFTP Client type definition */
 type Client struct {
 	connection net.Conn
 	dataConn net.Conn
+	dataAddr *net.TCPAddr
 	reader *Reader.Reader
 	credentials *Credentials.Credentials
 	settings *Settings.Settings
@@ -91,6 +116,7 @@ func NewCommand(command string, parameters string, expectedStatus int) *Command 
 	return &Command{command, parameters, expectedStatus}
 }
 
+/* Bookmark FTP Client builder */
 func NewClient(address string) (client *Client, err error) {
 	var urlData *url.URL
 	var host string
@@ -104,6 +130,7 @@ func NewClient(address string) (client *Client, err error) {
 		Settings.NewOption(OPT_Disconnected, false),	/* A QUIT command was called? */
 		Settings.NewOption(OPT_Authenticated, false),	/* A user is currently authenticated */
 		Settings.NewOption(OPT_PassiveMode, false), 	/* Client is not in passive mode at connection time */
+		Settings.NewOption(OPT_ExtendedPassive, false), /* Extended passive mode */
 		Settings.NewOption(OPT_DataPort, CONST_DataPort), /* Register a default invalid data port */
 	)
 
@@ -152,7 +179,7 @@ func NewClient(address string) (client *Client, err error) {
 	settings.Get(OPT_Connected).Set(true)
 
 	/* Instantiate the new client */
-	client = &Client{conn, nil, Reader.NewReader(conn), credentials, settings}
+	client = &Client{conn, nil, nil, Reader.NewReader(conn), credentials, settings}
 
 	/* Grab server greeting, and check for server ready status */
 	welcomeMessage, _ := client.getResponse()
@@ -395,6 +422,63 @@ func (c *Client) extractDataAddress (dataPortMessage string) (addr *net.TCPAddr,
 	return
 }
 
+/* Checks if the client is in any of the passive modes */
+func (c *Client) inPassiveMode() bool {
+	if c.settings.Get(OPT_PassiveMode).Is(true) || c.settings.Get(OPT_ExtendedPassive).Is(true) {
+		return true
+	}
+
+	return false
+}
+
+/* Parses a time-val (YYYYMMDDHHMMSS.sss - RFC-3659) representation and generates a new Time instance with obtained data */
+func (c *Client) parseTimeVal(timeVal string) (t *time.Time, err error) {
+	var year, month, day, hour, min, sec, nsec int
+	var dot rune = rune('.')
+	var inMilliseconds bool = false
+	timeVal = strings.TrimSpace(timeVal)
+
+	for i, c := range timeVal {
+		if c != dot {
+			d, err := strconv.Atoi(string(c))
+
+			if err != nil {
+				/* Stop parsing on wrong formatted data */
+				return t, ERR_InvalidTimeVal
+			}
+
+			if i < 4 {
+				/* Year part */
+				year = year * 10 + d
+			} else if i < 6 {
+				month = month * 10 + d
+			} else if  i < 8 {
+				day = day * 10 + d
+			} else if i < 10 {
+				hour = hour * 10 + d
+			} else if i < 12 {
+				min = min * 10 + d
+			} else if i < 14 {
+				sec = sec * 10 + d
+			} else if inMilliseconds {
+				nsec = nsec * 10 + d
+			}
+		} else {
+			/* Milliseconds start here */
+			inMilliseconds = true
+		}
+	}
+
+	/* Check for invalid month formats */
+	if _, ok := IntToMonth[month]; !ok {
+		return t, ERR_InvalidTimeVal
+	}
+
+	location, err := time.LoadLocation("Etc/GMT")
+	aux := time.Date(year, IntToMonth[month], day, hour, min, sec, nsec, location)
+	return &aux, err
+}
+
 /* Make a request to the server */
 func (c *Client) Request(command *Command) (ok bool, err error, rMessage string) {
 	return c.execute(command, false, true, CONST_CommandRetries)
@@ -403,6 +487,17 @@ func (c *Client) Request(command *Command) (ok bool, err error, rMessage string)
 /* Make a sequence of requests */
 func (c *Client) Sequence(commands ...*Command) (ok bool, err error) {
 	return c.sequence(commands)
+}
+
+/* COMMANDS Implementations ----------------------------------------------------------------------------------------- */
+
+// TODO: AbortFileTransfer
+
+/* Ask's the server for account information */
+func (c *Client) AccountInformation() (ok bool, err error) {
+	ok, err, _ = c.Request(NewCommand("acct", CONST_EmptyString, 0))
+	// TODO: Continue
+	return
 }
 
 /* Authenticate the user with provided credentials */
@@ -455,6 +550,25 @@ func (c *Client) Authenticate(credentials *Credentials.Credentials) (ok bool, er
 		}
 	}
 
+	return
+}
+
+// TODO: func (c *Client) AllocateDiskSpace() {}
+// TODO: func (c *Client) Append() {}
+
+/* Allows specification of an extended address for the data connection */
+func (c *Client) SpecifyExtendedAddress (address *net.TCPAddr) (ok bool, err error) {
+	var ipFamily int = 1 /* Assume IPv4 */
+	if address.IP.To4 == nil {
+		/* This is an IPv6 */
+		ipFamily = 2
+	}
+
+	ok, err, _ = c.Request(NewCommand(
+		"eprt",
+		fmt.Sprintf("%s%d%s%s%s%d%s", CONST_EPRTGlue, ipFamily, CONST_EPRTGlue, address.IP.String(), CONST_EPRTGlue, address.Port, CONST_EPRTGlue),
+		Status.PositiveCompletion,
+	))
 	return
 }
 
@@ -538,6 +652,22 @@ func (c *Client) Features() (features map[string]string, err error) {
 	return
 }
 
+/* Asks the server for the date and time of the last file modification */
+func (c *Client) FileModificationTime (fileName string) (t *time.Time, err error) {
+	var r string
+	_, err, r = c.Request(NewCommand("mdtm", fileName, Status.FileStatus))
+	t, err = c.parseTimeVal(r)
+	return
+}
+
+/* Asks the server for the file size */
+func (c *Client) FileSize (fileName string) (size int, err error) {
+	var r string
+	_, err, r = c.Request(NewCommand("size", fileName, Status.FileStatus))
+	// TODO: Continue
+	return
+}
+
 /* Request help from the server */
 func (c *Client) Help() (helpMessage string, err error) {
 	_, err, helpMessage = c.Request(NewCommand("help", CONST_EmptyString, Status.HelpMessage))
@@ -547,6 +677,32 @@ func (c *Client) Help() (helpMessage string, err error) {
 /* Request help for a specific command */
 func (c *Client) HelpWith(command string) (helpMessage string, err error) {
 	_, err, helpMessage = c.Request(NewCommand("help", command, Status.HelpMessage))
+	return
+}
+
+/* Request's the server to use the specified language for response messages */
+func (c *Client) Language(language string) (ok bool, err error) {
+	ok, err, _ = c.Request(NewCommand("lang", language, Status.PositiveCompletion))
+	return
+}
+
+/* Query the server to determine the currently supported languages (FEAT reuse) */
+func (c *Client) LanguagesSupported() (languages []string, err error) {
+	var r string
+	var langsString string
+	_, err, r = c.Request(NewCommand("feat", CONST_EmptyString, Status.SystemStatus))
+
+	if err == nil {
+		langsString = MatchFEATLanguages.FindString(r)
+		for _, lang := range strings.Split(langsString, ";") {
+			if strings.Contains(lang, "*") {
+				lang = strings.Join(strings.Split(lang, "*"), CONST_EmptyString)
+			}
+
+			languages = append(languages, lang)
+		}
+	}
+
 	return
 }
 
@@ -582,10 +738,50 @@ func (c *Client) List() (list string, err error) {
 	return
 }
 
+/* Puts the client in extended passive mode */
+func (c *Client) ToExtendedPassiveMode() (ok bool, err error) {
+	var port int
+	var r string
+	if c.settings.Get(OPT_ExtendedPassive).Is(true) {
+		/* Client in extended passive mode, ignore the new request */
+		return true, err
+	}
+
+	ok, err, r = c.Request(NewCommand("epsv", CONST_EmptyString, Status.ExtendedPassiveMode))
+	portString := MatchEPSVPort.FindString(r)
+	port, err = strconv.Atoi(portString)
+
+	if err == nil {
+		/* Remember the new data connection address */
+		c.dataAddr = &net.TCPAddr{net.ParseIP(c.connection.RemoteAddr().String()), port, CONST_EmptyString}
+
+		/* Establish a new data connection with the server using the specified port to verify availability */
+		c.dataConn, err = net.DialTCP("tcp", nil, c.dataAddr)
+
+		/* Mark the connection as being in passive mode */
+		if err == nil {
+			/* Reset passive mode flag, mark extended passive mode as active and close the test connection */
+			c.settings.Get(OPT_PassiveMode).Reset()
+			c.settings.Get(OPT_ExtendedPassive).Set(true)
+			c.dataConn.Close()
+		} else {
+			/* Error connecting to remote server on data link */
+			err = ERR_InvalidDataConn
+		}
+	}
+
+	return
+}
+
+/* Puts the client in long passive mode (this command is marked as obsolete in IANA commands extension list,
+ reuse of extended passive mode) */
+func (c *Client) ToLongPassiveMode() (ok bool, err error) {
+	return c.ToExtendedPassiveMode()
+}
+
 /* Puts the client in passive mode */
 func (c *Client) ToPassiveMode() (ok bool, err error) {
-	var hostAddress *net.TCPAddr
-	if (c.settings.Get(OPT_PassiveMode).Is(true)) {
+	if c.settings.Get(OPT_PassiveMode).Is(true) {
 		/* Client in passive mode, ignore the new request */
 		return true, err
 	}
@@ -595,15 +791,18 @@ func (c *Client) ToPassiveMode() (ok bool, err error) {
 
 	if ok {
 		/* Extract the server address and port */
-		hostAddress, err = c.extractDataAddress(r)
+		c.dataAddr, err = c.extractDataAddress(r)
 
 		if err == nil {
-			/* Establish data connection */
-			c.dataConn, err = net.DialTCP("tcp", nil, hostAddress)
+			/* Establish data connection to verify dataAddr validity */
+			c.dataConn, err = net.DialTCP("tcp", nil, c.dataAddr)
 
 			/* Mark the connection as being in passive mode */
 			if err == nil {
+				/* Reset extended passive mode flag, mark passive mode as active and close the test connection */
+				c.settings.Get(OPT_ExtendedPassive).Reset()
 				c.settings.Get(OPT_PassiveMode).Set(true)
+				c.dataConn.Close()
 			} else {
 				/* Error connecting to remote server on data link */
 				err = ERR_InvalidDataConn

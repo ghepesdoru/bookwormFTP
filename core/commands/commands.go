@@ -25,7 +25,13 @@ var ObsoleteCommands map[string]bool = map[string]bool {
 
 /* Maps historic commands to the standards compliant counterparts */
 var ObsoleteToKnown map[string]string = map[string]string {
-	// TODO: Map obsolete commands to current commands!
+	"LPRT": "EPRT",
+	"LPSV": "EPSV",
+	"XCUP": "CDUP",
+	"XCWD": "CWD",
+	"XMKD": "MKD",
+	"XPWD": "PWD",
+	"XRMD": "RMD",
 }
 
 /* Checks if the specified argument is a known valid COMMAND */
