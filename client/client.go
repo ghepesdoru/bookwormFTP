@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"time"
+	"path"
 	"regexp"
 	"strconv"
 	"net/url"
@@ -40,6 +41,7 @@ const (
 	OPT_DataPort		= "client_data_port"
 	OPT_PassiveMode		= "passive"
 	OPT_ExtendedPassive = "extended_passive"
+	OPT_CurrentDir		= "cwd"
 )
 
 /* Default errors definition */
@@ -57,6 +59,7 @@ var (
 	ERR_InvalidIpAndPortRepr = fmt.Errorf("Invalid ip and port representation. Expected ip8bit,ip8bit,ip8bit,ip8bit,port8bit,port8bit")
 	ERR_InvalidDataConn		 = fmt.Errorf("Unable to establish a data link with the remote server.")
 	ERR_InvalidTimeVal		 = fmt.Errorf("Invalid time-val representation.")
+	ERR_InvalidMKDPath		 = fmt.Errorf("Invalid path for directory creation. An error took place while recursively generating the path components.")
 
 	/* Error formats */
 	ERRF_InvalidCommandName = "Command error: Unrecognized command %s."
@@ -132,6 +135,7 @@ func NewClient(address string) (client *Client, err error) {
 		Settings.NewOption(OPT_PassiveMode, false), 	/* Client is not in passive mode at connection time */
 		Settings.NewOption(OPT_ExtendedPassive, false), /* Extended passive mode */
 		Settings.NewOption(OPT_DataPort, CONST_DataPort), /* Register a default invalid data port */
+		Settings.NewOption(OPT_CurrentDir, "/"),		/* Defines the default current working directory as / */
 	)
 
 	/* Extract the url parts */
@@ -479,6 +483,23 @@ func (c *Client) parseTimeVal(timeVal string) (t *time.Time, err error) {
 	return &aux, err
 }
 
+/* Extracts the current path parts (directories and file) from the specified input */
+func (c *Client) extractPathElements(p string) (dir string, file string) {
+	p = path.Clean(p)
+	return path.Split(p)
+}
+
+/* Given a relative path, will concatenate it with the current working directory and normalize it */
+func (c *Client) toAbsolutePath (d string) string {
+	if !path.IsAbs(d) {
+		/* Not an absolute path, concatenate the relative path to the working directory, and normalize them together  */
+		d = c.settings.Get(OPT_CurrentDir).ToString() + "/" + d
+		d, _ = c.extractPathElements(d)
+	}
+
+	return d
+}
+
 /* Make a request to the server */
 func (c *Client) Request(command *Command) (ok bool, err error, rMessage string) {
 	return c.execute(command, false, true, CONST_CommandRetries)
@@ -572,9 +593,23 @@ func (c *Client) SpecifyExtendedAddress (address *net.TCPAddr) (ok bool, err err
 	return
 }
 
-/* Changes the current directory on the server to the specified one */
-func (c *Client) ChangeDirectory(path string) (ok bool, err error) {
-	ok, err, _ = c.Request(NewCommand("cwd", path, Status.FileActionOk))
+/* Changes the current directory on the server to the specified one - supports paths relative to the currently selected directory */
+func (c *Client) ChangeDirectory(p string) (ok bool, err error) {
+	/* Normalize the path to an absolute path */
+	dir := c.toAbsolutePath(p)
+
+	/* Do not request changes to the same current directory */
+	if p == c.settings.Get(OPT_CurrentDir).ToString() {
+		return true, err
+	}
+
+	ok, err, _ = c.Request(NewCommand("cwd", dir, Status.FileActionOk))
+
+	if ok {
+		/* Remember the new path */
+		c.settings.Get(OPT_CurrentDir).Set(p)
+	}
+
 	return
 }
 
@@ -654,17 +689,21 @@ func (c *Client) Features() (features map[string]string, err error) {
 
 /* Asks the server for the date and time of the last file modification */
 func (c *Client) FileModificationTime (fileName string) (t *time.Time, err error) {
-	var r string
-	_, err, r = c.Request(NewCommand("mdtm", fileName, Status.FileStatus))
+	var r, dir, file string
+	dir = c.toAbsolutePath(fileName) /* Normalize to an absolute path directory */
+	_, file = c.extractPathElements(fileName) /* Extract file name */
+	_, err, r = c.Request(NewCommand("mdtm", path.Join(dir, file), Status.FileStatus))
 	t, err = c.parseTimeVal(r)
 	return
 }
 
 /* Asks the server for the file size */
 func (c *Client) FileSize (fileName string) (size int, err error) {
-	var r string
-	_, err, r = c.Request(NewCommand("size", fileName, Status.FileStatus))
-	// TODO: Continue
+	var r, dir, file string
+	dir = c.toAbsolutePath(fileName) /* Normalize to an absolute path directory */
+	_, file = c.extractPathElements(fileName) /* Extract file name */
+	_, err, r = c.Request(NewCommand("size", path.Join(dir, file), Status.FileStatus))
+	size = Status.ToInt([]byte(r))
 	return
 }
 
@@ -702,6 +741,44 @@ func (c *Client) LanguagesSupported() (languages []string, err error) {
 			languages = append(languages, lang)
 		}
 	}
+
+	return
+}
+
+/* Aks the server to create a new directory with the specified name */
+func (c *Client) MakeDirectory (p string) (ok bool, err error) {
+	var dir, cwd string
+	/* Normalize the directory name to an absolute path */
+	dir = c.toAbsolutePath(p)
+	cwd = c.settings.Get(OPT_CurrentDir).ToString()
+
+	/* Check if the current working directory is part of the new desired path hierarchy */
+	if idx := strings.LastIndex(dir, cwd); idx > - 1 {
+		/* Restrain the the directory to it's relative format */
+		dir = dir[idx + len(cwd):]
+	}
+
+	/* Recreate the entire path specified */
+	parts := strings.Split(dir, "/")
+	for _, k := range parts {
+		ok, err, _ = c.Request(NewCommand("mkd", p, 0))
+
+		if ok {
+			/* Navigate to the newly created directory */
+			ok, err = c.ChangeDirectory(k)
+
+			if !ok {
+				err = ERR_InvalidMKDPath
+				break
+			}
+		} else {
+			err = ERR_InvalidMKDPath
+			break
+		}
+	}
+
+	/* Change the current working directory back to the original one */
+	c.ChangeDirectory(cwd)
 
 	return
 }
