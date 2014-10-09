@@ -109,7 +109,11 @@ func (c *Command) AddError(err error) {
 }
 
 /* Marks the command as being executed, adding it's response */
-func (c *Command) AttachResponse(response *Response.Response) {
+func (c *Command) AttachResponse(response *Response.Response, err error) {
+	if err != nil {
+		c.AddError(err)
+	}
+
 	c.response = response
 }
 

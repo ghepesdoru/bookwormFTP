@@ -261,7 +261,6 @@ func (c *Client) request(command *Command.Command) (bool, error) {
 /* Executes a command (wrapper around request, takes care of response reading, error handling, and is status aware) */
 func (c *Client) execute(command *Command.Command, isSequence bool, execute bool, leftRetries int) {
 	/* Initialize variables to defaults */
-	var ok bool = false
 	var err error
 
 	if command.Name() == Commands.CONST_UnknownCommand {
@@ -278,7 +277,7 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 
 	/* Execute the command */
 	if execute {
-		ok, err = c.request(command)
+		_, err = c.request(command)
 
 		/* Error communicating to server */
 		if err != nil {
@@ -288,20 +287,16 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 	}
 
 	/* Get the server response */
-	response, err := c.getResponse()
+	command.AttachResponse(c.getResponse())
 
-	if err != nil {
-		/* An error took place while fetching or parsing the response */
-		command.AddError(err)
-		return
-	} else if response == nil {
+	if command.Response() == nil {
 		/* Empty server response */
 		command.AddError(ERR_NoServerResponse)
 		return
 	}
 
 	/* Check response status to determine the execution completion */
-	status := response.Status()
+	status := command.Response().Status()
 
 	/* Check relay status for next action */
 	first := status / 100
@@ -315,23 +310,23 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 	} else if first == 2 {
 		/* Positive Completion reply - action completed successfully, no matter of the expected status */
 		if !command.IsExpectedStatus(status) {
-			command.AddError(fmt.Errorf(ERRF_InvalidCompletionStatus, command.Name(), command.ExpectedStatus(), status, response.Message()))
+			command.AddError(fmt.Errorf(ERRF_InvalidCompletionStatus, command.Name(), command.ExpectedStatus(), status, command.Response().Message()))
 		}
 	} else if first == 3 {
 		/* Positive Intermediate reply - sequence of commands mandatory */
 		if !isSequence {
 			/* Error: Invalid single command. Use a sequence */
-			err = fmt.Errorf(ERRF_InvalidCommandOutOfSequence, command.Name(), status, response.Message())
+			command.AddError(fmt.Errorf(ERRF_InvalidCommandOutOfSequence, command.Name(), status, command.Response().Message()))
 		}
 	} else if first == 4 {
 		if leftRetries == 0 {
 			/* Stop the retry process. The acction failed to many times. */
-			err = fmt.Errorf(ERRF_CommandMaxRetries, command.Name(), status, response.Message())
+			command.AddError(fmt.Errorf(ERRF_CommandMaxRetries, command.Name(), status, command.Response().Message()))
 		} else {
 			/* Transient Negative Completion reply - repeat the command(s) */
 			if (isSequence) {
 				/* Reset the sequence, this is a temporary error */
-				err = ERR_RestartSequence
+				command.AddError(ERR_RestartSequence)
 			} else {
 				/* Try again to execute this command */
 				c.execute(command, isSequence, true, leftRetries - 1)
@@ -340,19 +335,15 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 		}
 	} else if first == 5 {
 		/* Permanent Negative Completion reply - failure. Forward the server error message */
-		err = fmt.Errorf(ERRF_CommandFailure, status, response.Message())
+		command.AddError(fmt.Errorf(ERRF_CommandFailure, status, command.Response().Message()))
 	}
 
-	if err != nil {
-		ok = false
-	}
-
-	if ok {
+	if command.Success() {
 		/* Command completed as expected - Debug point */
-		fmt.Println("Successfull command: ", command.Name(), response)
+		fmt.Println("Successfull command: ", command.Name(), command.Response())
 	} else {
 		/* Command failed - Debug point */
-		fmt.Println("Error executing: ", command.Name(), err)
+		fmt.Println("Error executing: ", command.Name(), command.LastError())
 	}
 
 	return
@@ -517,7 +508,7 @@ func (c *Client) AccountInformation() (bool, error) {
 /* Authenticate the user with provided credentials */
 func (c *Client) Authenticate(credentials *Credentials.Credentials) (bool, error) {
 	var modified bool = false
-	var command *Command.Command
+	var command *Command.Command = &Command.Command{}
 
 	if credentials == nil {
 		/* Fallback on existing credentials */
