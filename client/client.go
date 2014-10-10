@@ -41,6 +41,8 @@ const (
 	OPT_PassiveMode		= "passive"
 	OPT_ExtendedPassive = "extended_passive"
 	OPT_CurrentDir		= "cwd"
+	OPT_Account			= "account"
+	OPT_Account_Enabled = "account_active"
 )
 
 /* Default errors definition */
@@ -59,6 +61,8 @@ var (
 	ERR_InvalidDataConn		 = fmt.Errorf("Unable to establish a data link with the remote server.")
 	ERR_InvalidTimeVal		 = fmt.Errorf("Invalid time-val representation.")
 	ERR_InvalidMKDPath		 = fmt.Errorf("Invalid path for directory creation. An error took place while recursively generating the path components.")
+	ERR_LoginAccountRequired = fmt.Errorf("Please specify an account and restart the authentication sequence.")
+	ERR_SelectVirtualHostBeforeAuth = fmt.Errorf("The current connection can not be reinititialized. Please start a new connection and chose the virtual server before the authentication process.")
 
 	/* Error formats */
 	ERRF_InvalidCommandName = "Command error: Unrecognized command %s."
@@ -112,14 +116,16 @@ func NewClient(address string) (client *Client, err error) {
 	var authenticate, ok bool = true, false
 	var settings *Settings.Settings = Settings.NewSettings(
 		/* Define current connection settings with default values */
-		Settings.NewOption(OPT_Connected, false),		/* There is a connection to the host */
-		Settings.NewOption(OPT_ServerReady, false),		/* The server send it's welcome message? */
-		Settings.NewOption(OPT_Disconnected, false),	/* A QUIT command was called? */
-		Settings.NewOption(OPT_Authenticated, false),	/* A user is currently authenticated */
-		Settings.NewOption(OPT_PassiveMode, false), 	/* Client is not in passive mode at connection time */
-		Settings.NewOption(OPT_ExtendedPassive, false), /* Extended passive mode */
-		Settings.NewOption(OPT_DataPort, CONST_DataPort), /* Register a default invalid data port */
-		Settings.NewOption(OPT_CurrentDir, "/"),		/* Defines the default current working directory as / */
+		Settings.NewOption(OPT_Connected, false),			/* There is a connection to the host */
+		Settings.NewOption(OPT_ServerReady, false),			/* The server send it's welcome message? */
+		Settings.NewOption(OPT_Disconnected, false),		/* A QUIT command was called? */
+		Settings.NewOption(OPT_Authenticated, false),		/* A user is currently authenticated */
+		Settings.NewOption(OPT_PassiveMode, false), 		/* Client is not in passive mode at connection time */
+		Settings.NewOption(OPT_ExtendedPassive, false), 	/* Extended passive mode */
+		Settings.NewOption(OPT_DataPort, CONST_DataPort), 	/* Register a default invalid data port */
+		Settings.NewOption(OPT_Account, CONST_EmptyString),	/* Default account */
+		Settings.NewOption(OPT_Account_Enabled, false),		/* No active account */
+		Settings.NewOption(OPT_CurrentDir, "/"),			/* Defines the default current working directory as / */
 	)
 
 	/* Extract the url parts */
@@ -498,10 +504,32 @@ func (c *Client) Sequence(commands ...*Command.Command) (bool, *Command.Command)
 
 // TODO: AbortFileTransfer
 
-/* Ask's the server for account information */
-func (c *Client) AccountInformation() (bool, error) {
-	command := c.Request(NewCommand("acct", CONST_EmptyString, 0))
-	// TODO: Continue
+/* Specify the account in use to the server */
+func (c *Client) Account(accountInfo string) (bool, error) {
+	if c.settings.Get(OPT_Account_Enabled).Is(true) {
+		if c.settings.Get(OPT_Account).Is(accountInfo) {
+			/* Same account, return */
+			return true, nil
+		} else {
+			/* Reinitialize connection */
+			if ok, _ := c.Reinitialize(); !ok {
+				/* Connection reinitialization not supported */
+				return false, ERR_ReinNotImplemented
+			} else {
+				/* Connection reinitialized. Reset the account enable flag and call Account again */
+				c.settings.Get(OPT_Account_Enabled).Reset()
+				return c.Account(accountInfo)
+			}
+		}
+	}
+
+	command := c.Request(NewCommand("acct", accountInfo, 0))
+
+	if command.Success() {
+		c.settings.Get(OPT_Account).Set(accountInfo)
+		c.settings.Get(OPT_Account_Enabled).Set(accountInfo)
+	}
+
 	return command.Success(), command.LastError()
 }
 
@@ -541,7 +569,17 @@ func (c *Client) Authenticate(credentials *Credentials.Credentials) (bool, error
 		}
 	}
 
-	// TODO: Add account related functionality!! (a full commmand refactor was made for this)
+	if command.Response().Status() == Status.AccountForLogin {
+		/* An account is required to continue */
+		if c.settings.Get(OPT_Account).ToString() != CONST_EmptyString {
+			if _, err := c.Account(c.settings.Get(OPT_Account).ToString()); err != nil {
+				command.AddError(err)
+			}
+		} else {
+			/* Set an account and restart the sequence */
+			command.AddError(ERR_LoginAccountRequired)
+		}
+	}
 
 	if command.Success() {
 		/* Notify user authenticated */
@@ -710,7 +748,21 @@ func (c *Client) HelpWith(commandName string) (helpMessage string, err error) {
 	return command.Response().Message(), command.LastError()
 }
 
-/* Request's the server to use the specified language for response messages */
+/* Request server to expose the user to the content's of the specified virtual host */
+func (c *Client) Host(virtualHostDesired string) (bool, error) {
+	/* If a user is authenticated, try to reinitialize the connection */
+	if c.settings.Get(OPT_Authenticated).Is(true) {
+		if ok, _ := c.Reinitialize(); !ok {
+			/* Could not reinitialize the connection, notify the user to create a new connection */
+			return false, ERR_SelectVirtualHostBeforeAuth
+		}
+	}
+
+	command := c.Request(NewCommand("host", virtualHostDesired, 0))
+	return command.Success(), command.LastError()
+}
+
+/* Request the server to use the specified language for response messages */
 func (c *Client) Language(language string) (ok bool, err error) {
 	command := c.Request(NewCommand("lang", language, Status.PositiveCompletion))
 	return command.Success(), command.LastError()
@@ -881,6 +933,11 @@ func (c *Client) ToPassiveMode() (ok bool, err error) {
 func (c *Client) Reinitialize() (bool, error) {
 	command := c.Request(NewCommand("rein", CONST_EmptyString, Status.Ready))
 	return command.Success(), command.LastError()
+}
+
+/* Adds specified account information to the client instance's settings */
+func (c *Client) SetAccountData(accountInfo string) {
+	c.settings.Get(OPT_Account).Set(accountInfo)
 }
 
 /* Server system type */

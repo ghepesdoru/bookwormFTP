@@ -10,12 +10,12 @@ const (
 var KnownCommands map[string]bool = map[string]bool {
 	"ABOR": true,	"ACCT": true, 	"ADAT": true, 	"ALLO": true, 	"APPE": true, 	"AUTH": true, 	"CCC": true,
 	"CDUP": true, 	"CONF": true, 	"CWD": true, 	"DELE": true, 	"ENC": true, 	"EPRT": true,	"EPSV": true,
-	"FEAT": true, 	"HELP": true, 	"LANG": true, 	"LIST": true, 	"MDTM": true, 	"MIC": true, 	"MKD": true,
-	"MLSD": true, 	"MLST": true, 	"MODE": true, 	"NLST": true, 	"NOOP": true,	"OPTS": true, 	"OPTS_UTF8": true,
-	"PASS": true, 	"PASV": true, 	"PBSZ": true, 	"PORT": true, 	"PROT": true, 	"PWD": true, 	"QUIT": true,
-	"REIN": true, 	"REST": true, 	"RETR": true,	"RMD": true, 	"RNFR": true, 	"RNTO": true, 	"SITE": true,
-	"SIZE": true, 	"SMNT": true, 	"STAT": true, 	"STOR": true, 	"STOU": true, 	"STRU": true, 	"SYST": true,
-	"TYPE": true, 	"USER": true,
+	"FEAT": true, 	"HELP": true, 	"HOST": true,	"LANG": true, 	"LIST": true, 	"MDTM": true, 	"MIC": true,
+	"MKD": true,	"MLSD": true, 	"MLST": true, 	"MODE": true, 	"NLST": true, 	"NOOP": true,	"OPTS": true,
+	"OPTS_UTF8": true,				"PASS": true, 	"PASV": true, 	"PBSZ": true, 	"PORT": true, 	"PROT": true,
+	"PWD": true, 	"QUIT": true,	"REIN": true, 	"REST": true, 	"RETR": true,	"RMD": true, 	"RNFR": true,
+	"RNTO": true, 	"SITE": true,	"SIZE": true, 	"SMNT": true, 	"STAT": true, 	"STOR": true, 	"STOU": true,
+	"STRU": true, 	"SYST": true,	"TYPE": true, 	"USER": true,
 }
 
 /* Defines a list of known obsolete commands */
