@@ -43,6 +43,22 @@ const (
 	OPT_CurrentDir		= "cwd"
 	OPT_Account			= "account"
 	OPT_Account_Enabled = "account_active"
+
+	/* Types */
+	TYPE_Ascii			= "A"
+	TYPE_Ebcdic			= "E"
+	TYPE_Image			= "I"
+	TYPE_LocalByte		= "L"
+
+	/* Format controls */
+	FMTCTRL_NonPrint	= "N"
+	FMTCTRL_Telnet		= "T"
+	FMTCTRL_Carriage	= "C"
+
+	/* Transfer modes */
+	TRANSFER_Stream		= "S"
+	TRANSFER_Block		= "B"
+	TRANSFER_Compressed	= "C"
 )
 
 /* Default errors definition */
@@ -62,6 +78,10 @@ var (
 	ERR_InvalidTimeVal		 = fmt.Errorf("Invalid time-val representation.")
 	ERR_InvalidMKDPath		 = fmt.Errorf("Invalid path for directory creation. An error took place while recursively generating the path components.")
 	ERR_LoginAccountRequired = fmt.Errorf("Please specify an account and restart the authentication sequence.")
+	ERR_InvalidType			 = fmt.Errorf("Invalid type specified. Please consider using one of the available types (A, E, I, L).")
+	ERR_InvalidFMTCTRL		 = fmt.Errorf("Invalid format control. Please consider using one of the avialable format controls (N, T, C).")
+	ERR_InvalidByteSize		 = fmt.Errorf("Invalid byte size for Local byte Byte size type.")
+	ERR_InvalidTransferMode	 = fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
 	ERR_SelectVirtualHostBeforeAuth = fmt.Errorf("The current connection can not be reinititialized. Please start a new connection and chose the virtual server before the authentication process.")
 
 	/* Error formats */
@@ -94,6 +114,26 @@ var (
 		10:	time.October,
 		11:	time.November,
 		12:	time.December,
+	}
+
+	/* Definition of valid representation types */
+	RepresentationTypes = map[string]map[string]bool {
+		/* ASCII type */
+		"A": map[string]bool {
+			"N": true,	/* Non-Print */
+			"T": true,	/* Telnet format effectors */
+			"C": true,	/* Carriage Control (ASA) */
+		},
+		/* EBCDIC type */
+		"E": map[string]bool {
+			"N": true,
+			"T": true,
+			"C": true,
+		},
+		/* Image type */
+		"I": nil,
+		/* Local byte Byte size type */
+		"L": nil,
 	}
 )
 
@@ -661,6 +701,15 @@ func (c *Client) Disconnect() (quitMessage string, err error) {
 	return command.Response().Message(), command.LastError()
 }
 
+/* Remove the specified directory */
+func (c *Client) DeleteDirectory(dirName string) (bool, error) {
+	var dir string
+	dir = c.toAbsolutePath(dirName)
+
+	command := c.Request(NewCommand("rmd", dir, Status.FileActionOk))
+	return command.Success(), command.LastError()
+}
+
 /* Server supported features getter */
 func (c *Client) Features() (map[string]string, error) {
 	var raw string
@@ -935,6 +984,92 @@ func (c *Client) Reinitialize() (bool, error) {
 	return command.Success(), command.LastError()
 }
 
+/* Rename the specified file from it's original name to a newly selected name */
+func (c *Client) Rename(fileName string, modifiedName string) (bool, error) {
+	var dir, file string
+
+	/* Normalize each file name */
+	dir = c.toAbsolutePath(fileName)
+	_, file = c.extractPathElements(fileName)
+	fileName = path.Join(dir, file)
+
+	dir = c.toAbsolutePath(modifiedName)
+	_, file = c.extractPathElements(modifiedName)
+	modifiedName = path.Join(dir, file)
+
+	/* Execute the file renaming commands sequence */
+	_, command := c.Sequence(
+		NewCommand("rnfr", fileName, Status.FileActionPending),
+		NewCommand("rnto", modifiedName, Status.FileActionOk),
+	)
+
+	return command.Success(), command.LastError()
+}
+
+/* Impose the specified representation type to the server */
+func (c *Client) RepresentationType(representationType string, typeParameter interface {}) (bool, error) {
+	var formatControl, byteSize bool
+	var command *Command.Command
+
+	/* Check if the specified type is supported */
+	if _, ok := RepresentationTypes[representationType]; !ok {
+		/* Unsupported representation type */
+		return false, ERR_InvalidType
+	}
+
+	/* Determine parameter type */
+	switch typeParameter.(type) {
+	case string:
+		/* Text representation type (A & E) format control */
+		formatControl = true
+	case int:
+		/* Local byte Byte size type (L) */
+		byteSize = true
+	}
+
+	if formatControl {
+		/* Check if the specified type and format control represent a valid combination */
+		aux := RepresentationTypes[representationType]
+		if _, ok := aux[typeParameter.(string)]; !ok {
+			return false, ERR_InvalidFMTCTRL
+		}
+
+		command = c.Request(NewCommand("type", representationType + " " + typeParameter.(string), Status.PositiveCompletion))
+	} else  if byteSize {
+		/* Local byte Byte size type */
+		if typeParameter.(int) < 1 {
+			return false, ERR_InvalidByteSize
+		}
+
+		command = c.Request(NewCommand("type", TYPE_LocalByte + " " + strconv.Itoa(typeParameter.(int)), Status.PositiveCompletion))
+	} else {
+		/* Image type (binary) */
+		command = c.Request(NewCommand("type", TYPE_Image, Status.PositiveCompletion))
+	}
+
+	return command.Success(), command.LastError()
+}
+
+/* Gets the server current status */
+func (c *Client) ServerStatus() (status string, err error) {
+	command := c.Request(NewCommand("stat", CONST_EmptyString, Status.SystemStatus))
+	return command.Response().Message(), command.LastError()
+}
+
+/* Gets the server's status for the current file transfer */
+//func (c *Client) ServerTransferStatus() (status string, err error) {
+//	// TODO
+//}
+
+/* Equivalent to list but on the control connection. //TODO: rename and implement parser */
+func (c *Client) ServerStatusList(fileName string) (string, error) {
+	var dir, file string
+	dir = c.toAbsolutePath(fileName) /* Normalize to an absolute path directory */
+	_, file = c.extractPathElements(fileName) /* Extract file name */
+	command := c.Request(NewCommand("stat", path.Join(dir, file), Status.FileStatus))
+	return command.Response().Message(), command.LastError()
+}
+
 /* Adds specified account information to the client instance's settings */
 func (c *Client) SetAccountData(accountInfo string) {
 	c.settings.Get(OPT_Account).Set(accountInfo)
@@ -949,6 +1084,19 @@ func (c *Client) SystemType() (string, error) {
 /* Changes the current working directory to it's parent directory */
 func (c *Client) ToParentDirectory() (bool, error) {
 	command := c.Request(NewCommand("cdup", CONST_EmptyString, Status.FileActionOk))
+	return command.Success(), command.LastError()
+}
+
+/* Change the server transfer mode */
+func (c *Client) TransferMode(mode string) (bool, error) {
+	mode = strings.TrimSpace(strings.ToUpper(mode))
+
+	/* Check transfer mode type */
+	if mode != TRANSFER_Stream && mode != TRANSFER_Compressed && mode != TRANSFER_Block {
+		return false, ERR_InvalidTransferMode
+	}
+
+	command := c.Request(NewCommand("mode", mode, Status.PositiveCompletion))
 	return command.Success(), command.LastError()
 }
 
