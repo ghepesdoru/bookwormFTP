@@ -42,7 +42,11 @@ const (
 	OPT_ExtendedPassive = "extended_passive"
 	OPT_CurrentDir		= "cwd"
 	OPT_Account			= "account"
-	OPT_Account_Enabled = "account_active"
+	OPT_AccountEnabled = "account_active"
+	OPT_TransferMode	= "transfer_mode"
+	OPT_DataType		= "data_type"
+	OPT_FormatControl	= "format_control"
+	OPT_ByteSize		= "byte_size"
 
 	/* Types */
 	TYPE_Ascii			= "A"
@@ -59,6 +63,7 @@ const (
 	TRANSFER_Stream		= "S"
 	TRANSFER_Block		= "B"
 	TRANSFER_Compressed	= "C"
+	TRANSFER_Unspecified= "U"
 )
 
 /* Default errors definition */
@@ -164,7 +169,11 @@ func NewClient(address string) (client *Client, err error) {
 		Settings.NewOption(OPT_ExtendedPassive, false), 	/* Extended passive mode */
 		Settings.NewOption(OPT_DataPort, CONST_DataPort), 	/* Register a default invalid data port */
 		Settings.NewOption(OPT_Account, CONST_EmptyString),	/* Default account */
-		Settings.NewOption(OPT_Account_Enabled, false),		/* No active account */
+		Settings.NewOption(OPT_AccountEnabled, false),		/* No active account */
+		Settings.NewOption(OPT_TransferMode, TRANSFER_Unspecified), /* The connection has no specified transfer mode at this point */
+		Settings.NewOption(OPT_DataType, TYPE_Ascii), 		/* Presume ASCII as default data type */
+		Settings.NewOption(OPT_FormatControl, FMTCTRL_NonPrint), /* Presume non print format control */
+		Settings.NewOption(OPT_ByteSize, 8),				/* Asume a 8 bit byte size */
 		Settings.NewOption(OPT_CurrentDir, "/"),			/* Defines the default current working directory as / */
 	)
 
@@ -546,7 +555,7 @@ func (c *Client) Sequence(commands ...*Command.Command) (bool, *Command.Command)
 
 /* Specify the account in use to the server */
 func (c *Client) Account(accountInfo string) (bool, error) {
-	if c.settings.Get(OPT_Account_Enabled).Is(true) {
+	if c.settings.Get(OPT_AccountEnabled).Is(true) {
 		if c.settings.Get(OPT_Account).Is(accountInfo) {
 			/* Same account, return */
 			return true, nil
@@ -557,7 +566,7 @@ func (c *Client) Account(accountInfo string) (bool, error) {
 				return false, ERR_ReinNotImplemented
 			} else {
 				/* Connection reinitialized. Reset the account enable flag and call Account again */
-				c.settings.Get(OPT_Account_Enabled).Reset()
+				c.settings.Get(OPT_AccountEnabled).Reset()
 				return c.Account(accountInfo)
 			}
 		}
@@ -567,7 +576,7 @@ func (c *Client) Account(accountInfo string) (bool, error) {
 
 	if command.Success() {
 		c.settings.Get(OPT_Account).Set(accountInfo)
-		c.settings.Get(OPT_Account_Enabled).Set(accountInfo)
+		c.settings.Get(OPT_AccountEnabled).Set(accountInfo)
 	}
 
 	return command.Success(), command.LastError()
@@ -1029,12 +1038,29 @@ func (c *Client) RepresentationType(representationType string, typeParameter int
 
 	if formatControl {
 		/* Check if the specified type and format control represent a valid combination */
-		aux := RepresentationTypes[representationType]
-		if _, ok := aux[typeParameter.(string)]; !ok {
-			return false, ERR_InvalidFMTCTRL
+		if len(typeParameter.(string)) == 0 {
+			/* Default to non print format control */
+			typeParameter.(string) = FMTCTRL_NonPrint
+		} else {
+			aux := RepresentationTypes[representationType]
+			if _, ok := aux[typeParameter.(string)]; !ok {
+				return false, ERR_InvalidFMTCTRL
+			}
+		}
+
+		/* Do not request the server if neither the representation, nor the format changed */
+		if c.settings.Get(OPT_DataType).Is(representationType) && c.settings.Get(OPT_FormatControl).Is(typeParameter.(string)) {
+			return true, nil
 		}
 
 		command = c.Request(NewCommand("type", representationType + " " + typeParameter.(string), Status.PositiveCompletion))
+
+		if command.Success() {
+			/* Remember the current data type and format control */
+			c.settings.Get(OPT_DataType).Set(representationType)
+			c.settings.Get(OPT_FormatControl).Set(typeParameter.(string))
+			c.settings.Get(OPT_ByteSize).Reset()
+		}
 	} else  if byteSize {
 		/* Local byte Byte size type */
 		if typeParameter.(int) < 1 {
@@ -1042,9 +1068,22 @@ func (c *Client) RepresentationType(representationType string, typeParameter int
 		}
 
 		command = c.Request(NewCommand("type", TYPE_LocalByte + " " + strconv.Itoa(typeParameter.(int)), Status.PositiveCompletion))
+
+		if command.Success() {
+			/* Remember the byte size */
+			c.settings.Get(OPT_ByteSize).Set(strconv.Itoa(typeParameter.(int)))
+			c.settings.Get(OPT_DataType).Reset()
+			c.settings.Get(OPT_FormatControl).Reset()
+		}
 	} else {
 		/* Image type (binary) */
 		command = c.Request(NewCommand("type", TYPE_Image, Status.PositiveCompletion))
+
+		if command.Success() {
+			c.settings.Get(OPT_ByteSize).Reset()
+			c.settings.Get(OPT_DataType).Reset()
+			c.settings.Get(OPT_FormatControl).Reset()
+		}
 	}
 
 	return command.Success(), command.LastError()
@@ -1097,6 +1136,12 @@ func (c *Client) TransferMode(mode string) (bool, error) {
 	}
 
 	command := c.Request(NewCommand("mode", mode, Status.PositiveCompletion))
+
+	/* Remember the current transfer mode */
+	if command.Success() {
+		c.settings.Get(OPT_TransferMode).Set(mode)
+	}
+
 	return command.Success(), command.LastError()
 }
 
