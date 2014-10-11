@@ -1040,7 +1040,7 @@ func (c *Client) RepresentationType(representationType string, typeParameter int
 		/* Check if the specified type and format control represent a valid combination */
 		if len(typeParameter.(string)) == 0 {
 			/* Default to non print format control */
-			typeParameter.(string) = FMTCTRL_NonPrint
+			typeParameter = FMTCTRL_NonPrint
 		} else {
 			aux := RepresentationTypes[representationType]
 			if _, ok := aux[typeParameter.(string)]; !ok {
