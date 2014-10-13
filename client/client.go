@@ -46,6 +46,7 @@ const (
 	OPT_DataType		= "data_type"
 	OPT_FormatControl	= "format_control"
 	OPT_ByteSize		= "byte_size"
+	OPT_FileStructure	= "file_structure"
 
 	/* Types */
 	TYPE_Ascii			= "A"
@@ -63,6 +64,10 @@ const (
 	TRANSFER_Block		= "B"
 	TRANSFER_Compressed	= "C"
 	TRANSFER_Unspecified= "U"
+
+	FILESTRUCT_File		= "F"
+	FILESTRUCT_Record	= "R"
+	FILESTRUCT_Page		= "P"
 )
 
 /* Default errors definition */
@@ -87,6 +92,7 @@ var (
 	ERR_InvalidByteSize		 = fmt.Errorf("Invalid byte size for Local byte Byte size type.")
 	ERR_InvalidTransferMode	 = fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
 	ERR_InvalidPort			 = fmt.Errorf("Invalid data connection port. Consider a port number higher then 30 000.")
+	ERR_InvalidFileStructure = fmt.Errorf("Invalid file structure type. Please consider using one of the default types: F, R, P.")
 	ERR_SelectVirtualHostBeforeAuth = fmt.Errorf("The current connection can not be reinititialized. Please start a new connection and chose the virtual server before the authentication process.")
 
 	/* Error formats */
@@ -169,6 +175,7 @@ func NewClient(address string) (client *Client, err error) {
 		Settings.NewOption(OPT_DataType, TYPE_Ascii), 		/* Presume ASCII as default data type */
 		Settings.NewOption(OPT_FormatControl, FMTCTRL_NonPrint), /* Presume non print format control */
 		Settings.NewOption(OPT_ByteSize, 8),				/* Asume a 8 bit byte size */
+		Settings.NewOption(OPT_FileStructure, FILESTRUCT_File), /* Default to the file structure of file */
 		Settings.NewOption(OPT_CurrentDir, "/"),			/* Defines the default current working directory as / */
 	)
 
@@ -775,6 +782,22 @@ func (c *Client) FileSize (fileName string) (size int, err error) {
 	return size, command.LastError()
 }
 
+/* Gives the ability to define the file structure (F, R, P) */
+func (c *Client) FileStructure(fileStructureType string) (bool, error) {
+	fileStructureType = strings.TrimSpace(strings.ToUpper(fileStructureType))
+	if fileStructureType != FILESTRUCT_File && fileStructureType != FILESTRUCT_Record && fileStructureType != FILESTRUCT_Page {
+		return false, ERR_InvalidFileStructure
+	}
+
+	command := c.Request(NewCommand("stru", fileStructureType, Status.PositiveCompletion))
+
+	if command.Success() {
+		c.settings.Get(OPT_FileStructure).Set(fileStructureType)
+	}
+
+	return command.Success(), command.LastError()
+}
+
 /* Request help from the server */
 func (c *Client) Help() (helpMessage string, err error) {
 	command := c.Request(NewCommand("help", CONST_EmptyString, Status.HelpMessage))
@@ -827,6 +850,60 @@ func (c *Client) LanguagesSupported() (languages []string, err error) {
 	return
 }
 
+/* List the contents of the current directory */
+func (c *Client) ListWorkingDir() (list string, err error) {
+	return c.List(c.toAbsolutePath(CONST_EmptyString))
+}
+
+/* List the contents of the specified file or directory */
+func (c *Client) List(p string) (list string, err error) {
+	var dir, file string
+
+	if !c.inPassiveMode() {
+		err = ERR_InvalidListCommand
+		return
+	}
+
+	/* Normalize each file name */
+	dir = c.toAbsolutePath(p)
+	_, file = c.extractPathElements(p)
+	p = path.Join(dir, file)
+
+	/* Execute the list command if possible in the current context */
+	command := c.Request(NewCommand("list", p, Status.DataConnectionClose))
+
+	// TODO: Continue, grab data from the data connection once the current request finishes
+
+	return CONST_EmptyString, command.LastError()
+}
+
+/* List contents of the current working directory by name */
+func (c *Client) ListNamesWorkingDir() (list string, err error) {
+	return c.ListNames(c.toAbsolutePath(CONST_EmptyString))
+}
+
+/* List the contents of the specified directory by name */
+func (c *Client) ListNames(p string) (list string, err error) {
+	var dir, file string
+
+	if !c.inPassiveMode() {
+		err = ERR_InvalidListCommand
+		return
+	}
+
+	/* Normalize each file name */
+	dir = c.toAbsolutePath(p)
+	_, file = c.extractPathElements(p)
+	p = path.Join(dir, file)
+
+	/* Execute the list command if possible in the current context */
+	command := c.Request(NewCommand("nlst", p, Status.DataConnectionClose))
+
+	// TODO: Continue, grab data from the data connection once the current request finishes
+
+	return CONST_EmptyString, command.LastError()
+}
+
 /* Aks the server to create a new directory with the specified name */
 func (c *Client) MakeDirectory (p string) (ok bool, err error) {
 	var dir, cwd string
@@ -873,105 +950,15 @@ func (c *Client) NoOP() (bool, error) {
 	return command.Success(), command.LastError()
 }
 
-/* List the contents of the current directory */
-func (c *Client) List() (list string, err error) {
-	if !c.inPassiveMode() {
-		err = ERR_InvalidListCommand
-		return
+/* Gives the ability to set desired options for any of the FTP commands supporting options */
+func (c *Client) Options(cmd string, options string) (bool, error) {
+	cmd = Commands.ToStandardCommand(cmd)
+
+	if !Commands.IsValid(cmd) {
+		return false, fmt.Errorf(ERRF_InvalidCommandName, cmd)
 	}
 
-
-	/* Execute the list command if possible in the current context */
-	command := c.Request(NewCommand("list", "/ripe", 0))
-
-	// TODO: Continue, grab data from the data connection once the current request finishes
-
-	return CONST_EmptyString, command.LastError()
-}
-
-/* Puts the client in extended passive mode */
-func (c *Client) ToExtendedPassiveMode() (ok bool, err error) {
-	if c.settings.Get(OPT_ExtendedPassive).Is(true) {
-		/* Client in extended passive mode, ignore the new request */
-		return true, err
-	}
-
-	command := c.Request(NewCommand("epsv", CONST_EmptyString, Status.ExtendedPassiveMode))
-	addr := Address.FromExtendedPortSpecifier(command.Response().Message())
-	if nil == addr {
-		command.AddError(ERR_InvalidDataConn)
-	}
-
-	if command.Success() {
-		/* Remember the new data connection address */
-		addr2 := Address.FromConnection(c.connection)
-		addr2.Port = addr.Port
-		c.dataAddr = addr2.ToTCPAddr()
-
-		/* Establish a new data connection with the server using the specified port to verify availability */
-		c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
-
-		/* Mark the connection as being in passive mode */
-		if err == nil {
-			/* Reset passive mode flag, mark extended passive mode as active and close the test connection */
-			c.settings.Get(OPT_PassiveMode).Reset()
-			c.settings.Get(OPT_ExtendedPassive).Set(true)
-			c.dataConn.Close()
-		} else {
-			/* Error connecting to remote server on data link */
-			command.AddError(ERR_InvalidDataConn)
-		}
-	}
-
-	return command.Success(), command.LastError()
-}
-
-/* Puts the client in long passive mode (this command is marked as obsolete in IANA commands extension list,
- reuse of extended passive mode) */
-func (c *Client) ToLongPassiveMode() (ok bool, err error) {
-	return c.ToExtendedPassiveMode()
-}
-
-/* Puts the client in passive mode */
-func (c *Client) ToPassiveMode() (ok bool, err error) {
-	if c.settings.Get(OPT_PassiveMode).Is(true) {
-		/* Client in passive mode, ignore the new request */
-		return true, err
-	}
-
-	command := c.Request(NewCommand("pasv", CONST_EmptyString, Status.PassiveMode))
-
-	if command.Success() {
-		/* Extract the server address and port */
-		addr := Address.FromPortSpecifier(command.Response().Message())
-
-		if nil == addr {
-			/* Insuficcient data to determine the port part of a data connection port response */
-			command.AddError(ERR_InvalidIpAndPortRepr)
-		}
-
-		if command.Success() {
-			/* Register the new dataAddr */
-			c.dataAddr = addr.ToTCPAddr()
-
-			/* Establish data connection to verify dataAddr validity */
-			c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
-
-			/* Mark the connection as being in passive mode */
-			if err == nil {
-				/* Reset extended passive mode flag, mark passive mode as active and close the test connection */
-				c.settings.Get(OPT_ExtendedPassive).Reset()
-				c.settings.Get(OPT_PassiveMode).Set(true)
-				c.dataConn.Close()
-			} else {
-				/* Error connecting to remote server on data link */
-				command.AddError(ERR_InvalidDataConn)
-			}
-		} else {
-			command.AddError(err)
-		}
-	}
-
+	command := c.Request(NewCommand("opts", cmd + " " + options, Status.PositiveCompletion))
 	return command.Success(), command.LastError()
 }
 
@@ -1097,15 +1084,116 @@ func (c *Client) ServerStatusList(fileName string) (string, error) {
 	return command.Response().Message(), command.LastError()
 }
 
+/* Gives the ability to specify site parameters to the server */
+func (c *Client) SiteParameters(params string) (bool, error) {
+	command := c.Request(NewCommand("site", params, Status.PositiveCompletion))
+	return command.Success(), command.LastError()
+}
+
 /* Adds specified account information to the client instance's settings */
 func (c *Client) SetAccountData(accountInfo string) {
 	c.settings.Get(OPT_Account).Set(accountInfo)
+}
+
+/* Allows mounting of a different file system data structure without altering login or accounting information  */
+func (c *Client) StructureMount(p string) (bool, error) {
+	var dir, file string
+	dir = c.toAbsolutePath(p) /* Normalize to an absolute path directory */
+	_, file = c.extractPathElements(p) /* Extract file name */
+	command := c.Request(NewCommand("smnt", path.Join(dir, file), Status.FileActionOk))
+	return command.Success(), command.LastError()
 }
 
 /* Server system type */
 func (c *Client) SystemType() (string, error) {
 	command := c.Request(NewCommand("syst", CONST_EmptyString, Status.NAMEType))
 	return command.Response().Message(), command.LastError()
+}
+
+/* Puts the client in extended passive mode */
+func (c *Client) ToExtendedPassiveMode() (ok bool, err error) {
+	if c.settings.Get(OPT_ExtendedPassive).Is(true) {
+		/* Client in extended passive mode, ignore the new request */
+		return true, err
+	}
+
+	command := c.Request(NewCommand("epsv", CONST_EmptyString, Status.ExtendedPassiveMode))
+	addr := Address.FromExtendedPortSpecifier(command.Response().Message())
+	if nil == addr {
+		command.AddError(ERR_InvalidDataConn)
+	}
+
+	if command.Success() {
+		/* Remember the new data connection address */
+		addr2 := Address.FromConnection(c.connection)
+		addr2.Port = addr.Port
+		c.dataAddr = addr2.ToTCPAddr()
+
+		/* Establish a new data connection with the server using the specified port to verify availability */
+		c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
+
+		/* Mark the connection as being in passive mode */
+		if err == nil {
+			/* Reset passive mode flag, mark extended passive mode as active and close the test connection */
+			c.settings.Get(OPT_PassiveMode).Reset()
+			c.settings.Get(OPT_ExtendedPassive).Set(true)
+			c.dataConn.Close()
+		} else {
+			/* Error connecting to remote server on data link */
+			command.AddError(ERR_InvalidDataConn)
+		}
+	}
+
+	return command.Success(), command.LastError()
+}
+
+/* Puts the client in long passive mode (this command is marked as obsolete in IANA commands extension list,
+ reuse of extended passive mode) */
+func (c *Client) ToLongPassiveMode() (ok bool, err error) {
+	return c.ToExtendedPassiveMode()
+}
+
+/* Puts the client in passive mode */
+func (c *Client) ToPassiveMode() (ok bool, err error) {
+	if c.settings.Get(OPT_PassiveMode).Is(true) {
+		/* Client in passive mode, ignore the new request */
+		return true, err
+	}
+
+	command := c.Request(NewCommand("pasv", CONST_EmptyString, Status.PassiveMode))
+
+	if command.Success() {
+		/* Extract the server address and port */
+		addr := Address.FromPortSpecifier(command.Response().Message())
+
+		if nil == addr {
+			/* Insuficcient data to determine the port part of a data connection port response */
+			command.AddError(ERR_InvalidIpAndPortRepr)
+		}
+
+		if command.Success() {
+			/* Register the new dataAddr */
+			c.dataAddr = addr.ToTCPAddr()
+
+			/* Establish data connection to verify dataAddr validity */
+			c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
+
+			/* Mark the connection as being in passive mode */
+			if err == nil {
+				/* Reset extended passive mode flag, mark passive mode as active and close the test connection */
+				c.settings.Get(OPT_ExtendedPassive).Reset()
+				c.settings.Get(OPT_PassiveMode).Set(true)
+				c.dataConn.Close()
+			} else {
+				/* Error connecting to remote server on data link */
+				command.AddError(ERR_InvalidDataConn)
+			}
+		} else {
+			command.AddError(err)
+		}
+	}
+
+	return command.Success(), command.LastError()
 }
 
 /* Changes the current working directory to it's parent directory */
