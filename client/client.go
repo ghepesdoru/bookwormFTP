@@ -5,10 +5,10 @@ import (
 	"net"
 	"time"
 	"path"
-	"regexp"
 	"strconv"
 	"net/url"
 	"strings"
+	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
 	Commands "github.com/ghepesdoru/bookwormFTP/core/commands"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
@@ -29,7 +29,6 @@ const (
 	CONST_CommandRetries= 3
 	CONST_DataPort	 	= -1
 	CONST_Comma			= ","
-	CONST_EPRTGlue		= "|"
 
 	/* Connection option names */
 	OPT_Connected 		= "connected"
@@ -71,7 +70,7 @@ var (
 	ERR_InvalidClientAddress = fmt.Errorf("Invalid client address.")
 	ERR_ResponseParsingError = fmt.Errorf("An error triggered while parsing the server response.")
 	ERR_UnconsumedResponses	 = fmt.Errorf("Acumulation of unconsummed responses from the server.")
-	ERR_NoServerResponse	 = fmt.Errorf("Response error: Unable to fetch a response from server at this time.")
+	ERR_NoServerResponse	 = fmt.Errorf("Unable to fetch a response from server at this time.")
 	ERR_RestartSequence		 = fmt.Errorf("Restart sequence.")
 	ERR_ServerNotReady		 = fmt.Errorf("Server is disconnected or otherwise unavailable.")
 	ERR_ReinNotImplemented	 = fmt.Errorf("Server state reinitialization not supported. (REIN)")
@@ -87,6 +86,7 @@ var (
 	ERR_InvalidFMTCTRL		 = fmt.Errorf("Invalid format control. Please consider using one of the avialable format controls (N, T, C).")
 	ERR_InvalidByteSize		 = fmt.Errorf("Invalid byte size for Local byte Byte size type.")
 	ERR_InvalidTransferMode	 = fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
+	ERR_InvalidPort			 = fmt.Errorf("Invalid data connection port. Consider a port number higher then 30 000.")
 	ERR_SelectVirtualHostBeforeAuth = fmt.Errorf("The current connection can not be reinititialized. Please start a new connection and chose the virtual server before the authentication process.")
 
 	/* Error formats */
@@ -100,11 +100,6 @@ var (
 
 /* Other global declarations */
 var (
-	/* Matches a passive/port command address: ipv4,port (4 x 8bit + 2 x 8bit) */
-	MatchHostAndPort 	= regexp.MustCompilePOSIX(`([0-9]{1,3}+,){5}+[0-9]{1,3}`)
-	/* Matches the port portion of the EPSV reply format |||port| */
-	MatchEPSVPort		= regexp.MustCompilePOSIX(`([0-9]{1,5})`)
-
 	/* Translation map from int to time.Month */
 	IntToMonth 			= map[int]time.Month {
 		1: 	time.January,
@@ -347,6 +342,10 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 	if command.Response() == nil {
 		/* Empty server response */
 		command.AddError(ERR_NoServerResponse)
+
+		/* Attach an empty response to the command to ensure interface chaining capabilities. */
+		command.AttachResponse(&Response.Response{}, nil)
+
 		return
 	}
 
@@ -431,37 +430,6 @@ func (c *Client) sequence(commands []*Command.Command) (ok bool, last *Command.C
 	}
 
 	return last.Success(), last
-}
-
-/* Given a passive connection replay, extract a TCPAddr structure containing the ip and port that the data connection will use */
-func (c *Client) extractDataAddress (dataPortMessage string) (addr *net.TCPAddr, err error) {
-	var port int = -1
-	ipAndPort := MatchHostAndPort.FindString(dataPortMessage)
-	parts := strings.Split(ipAndPort, CONST_Comma)
-
-	if len(parts) == 6 {
-		p1, e1 := strconv.Atoi(parts[4])
-		p2, e2 := strconv.Atoi(parts[5])
-
-		if e1 == nil && e1 == nil {
-			port = p1 * 256 + p2
-		} else if e1 != nil {
-			/* Error while parsing port part 1 */
-			err = e1
-		} else {
-			/* Error while parsing port part 2 */
-			err = e2
-		}
-	} else {
-		/* Insuficcient data to determine the port part of a data connection port response */
-		err = ERR_InvalidIpAndPortRepr
-	}
-
-	if port != -1 {
-		addr = &net.TCPAddr{net.ParseIP(strings.Join(parts[:4], ".")), port, ""}
-	}
-
-	return
 }
 
 /* Checks if the client is in any of the passive modes */
@@ -651,18 +619,31 @@ func (c *Client) Authenticate(credentials *Credentials.Credentials) (bool, error
 // TODO: func (c *Client) Append() {}
 
 /* Allows specification of an extended address for the data connection */
-func (c *Client) SpecifyExtendedAddress (address *net.TCPAddr) (bool, error) {
-	var ipFamily int = 1 /* Assume IPv4 */
-	if address.IP.To4 == nil {
-		/* This is an IPv6 */
-		ipFamily = 2
+func (c *Client) SpecifyExtendedAddress (port int) (bool, error) {
+	if port < 1 {
+		/* Invalid port number */
+		return false, ERR_InvalidPort
 	}
 
-	command := c.Request(NewCommand(
-		"eprt",
-		fmt.Sprintf("%s%d%s%s%s%d%s", CONST_EPRTGlue, ipFamily, CONST_EPRTGlue, address.IP.String(), CONST_EPRTGlue, address.Port, CONST_EPRTGlue),
-		Status.PositiveCompletion,
-	))
+	address := Address.FromConnection(c.connection)
+	address.Port = port
+
+	command := c.Request(NewCommand("eprt", address.ToExtendedPortSpecifier(), Status.PositiveCompletion))
+
+	return command.Success(), command.LastError()
+}
+
+/* Gives the ability to specify a non default data port for the data connection */
+func (c *Client) SpecifyPort (port int) (bool, error) {
+	if port < 1 {
+		/* Invalid port number */
+		return false, ERR_InvalidPort
+	}
+
+	addr := Address.FromConnection(c.connection)
+	addr.Port = port
+	command := c.Request(NewCommand("port", addr.ToPortSpecifier(), Status.PositiveCompletion))
+
 	return command.Success(), command.LastError()
 }
 
@@ -910,26 +891,25 @@ func (c *Client) List() (list string, err error) {
 
 /* Puts the client in extended passive mode */
 func (c *Client) ToExtendedPassiveMode() (ok bool, err error) {
-	var port int
 	if c.settings.Get(OPT_ExtendedPassive).Is(true) {
 		/* Client in extended passive mode, ignore the new request */
 		return true, err
 	}
 
 	command := c.Request(NewCommand("epsv", CONST_EmptyString, Status.ExtendedPassiveMode))
-
-	portString := MatchEPSVPort.FindString(command.Response().Message())
-	port, err = strconv.Atoi(portString)
-	if err != nil {
-		command.AddError(err)
+	addr := Address.FromExtendedPortSpecifier(command.Response().Message())
+	if nil == addr {
+		command.AddError(ERR_InvalidDataConn)
 	}
 
 	if command.Success() {
 		/* Remember the new data connection address */
-		c.dataAddr = &net.TCPAddr{net.ParseIP(c.connection.RemoteAddr().String()), port, CONST_EmptyString}
+		addr2 := Address.FromConnection(c.connection)
+		addr2.Port = addr.Port
+		c.dataAddr = addr2.ToTCPAddr()
 
 		/* Establish a new data connection with the server using the specified port to verify availability */
-		c.dataConn, err = net.DialTCP("tcp", nil, c.dataAddr)
+		c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
 
 		/* Mark the connection as being in passive mode */
 		if err == nil {
@@ -963,11 +943,19 @@ func (c *Client) ToPassiveMode() (ok bool, err error) {
 
 	if command.Success() {
 		/* Extract the server address and port */
-		c.dataAddr, err = c.extractDataAddress(command.Response().Message())
+		addr := Address.FromPortSpecifier(command.Response().Message())
 
-		if err == nil {
+		if nil == addr {
+			/* Insuficcient data to determine the port part of a data connection port response */
+			command.AddError(ERR_InvalidIpAndPortRepr)
+		}
+
+		if command.Success() {
+			/* Register the new dataAddr */
+			c.dataAddr = addr.ToTCPAddr()
+
 			/* Establish data connection to verify dataAddr validity */
-			c.dataConn, err = net.DialTCP("tcp", nil, c.dataAddr)
+			c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
 
 			/* Mark the connection as being in passive mode */
 			if err == nil {
