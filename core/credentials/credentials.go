@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const EMPTY_SPACE = ' '
+
 /* Bookworm client user data */
 type Credentials struct {
 	username string
@@ -18,8 +20,17 @@ var (
 
 /* Credentials structure builder */
 func NewCredentials(username string, password string) (credentials *Credentials, err error) {
+	var u []string
 	username = strings.TrimSpace(username)
 	password = strings.TrimSpace(password)
+
+	for _, c := range username {
+		if c != EMPTY_SPACE {
+			u = append(u, string(c))
+		}
+	}
+
+	username = strings.Join(u, "")
 
 	if len(username) == 0 {
 		err = ERR_UsernameToShort
