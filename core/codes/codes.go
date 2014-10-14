@@ -75,13 +75,13 @@ const (
 
 /* Defines a map of known reply codes */
 var KnownStatusCodes map[int]bool = map[int]bool {
-	110: true, 120: true, 125: true, 150: true,
+	100: true, 110: true, 120: true, 125: true, 150: true,
 	200: true, 202: true, 211: true, 212: true, 213: true, 214: true, 215: true, 220: true, 221: true, 225: true,
 	226: true, 227: true, 228: true, 229: true, 230: true, 231: true, 232: true, 250: true, 257: true,
-	331: true, 332: true, 350: true,
-	421: true, 425: true, 426: true, 430: true, 434: true, 450: true, 451: true, 452: true,
+	300: true, 331: true, 332: true, 350: true,
+	400: true, 421: true, 425: true, 426: true, 430: true, 434: true, 450: true, 451: true, 452: true,
 	500: true, 501: true, 502: true, 503: true, 504: true, 530: true, 532: true, 550: true, 551: true, 552: true, 553: true,
-	631: true, 632: true, 633: true,
+	600: true, 631: true, 632: true, 633: true,
 	10000: true, 10054: true, 10060: true, 10061: true, 10066: true, 10068: true,
 }
 

@@ -24,12 +24,12 @@ var (
 /* Parser type definition */
 type Parser struct{
 	responses []*response.Response
-	errors []*error
+	errors []error
 }
 
 /* Empty Parser builder */
 func NewParser() *Parser {
-	return &Parser{[]*response.Response{}, []*error{}}
+	return &Parser{[]*response.Response{}, []error{}}
 }
 
 func (r *Parser) ParseBlock(block []byte) {
@@ -44,7 +44,7 @@ func (r *Parser) ParseBlock(block []byte) {
 		if err != nil {
 			if err != ERR_EmptyInput {
 				fmt.Println(fmt.Errorf(ERRF_ErrorParsing, err))
-				r.errors = append(r.errors, &err)
+				r.errors = append(r.errors, err)
 			}
 		} else {
 			r.responses = append(r.responses, resp)
@@ -82,12 +82,12 @@ func (r *Parser) HasErrors() bool {
 }
 
 /* Returns all encountered errors while parsing */
-func (r *Parser) Errors() []*error {
+func (r *Parser) Errors() []error {
 	return r.errors
 }
 
 /* Getter for the first encountered error */
-func (r *Parser) LastError() *error {
+func (r *Parser) LastError() error {
 	if r.HasErrors() {
 		return r.errors[0]
 	}

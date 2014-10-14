@@ -14,6 +14,8 @@ const (
 	CONST_EPRTDelimiter = "|"
 	CONST_IPv4Delimiter = "."
 	CONST_PortDelimiter = ","
+	CONST_IPv4			= 1
+	CONST_IPv6			= 2
 )
 
 var (
@@ -34,7 +36,7 @@ func (l *Addr) ToPortSpecifier() string {
 	var parts []string
 
 	/* Only for IPv4 */
-	if l.IPFamily == 1 {
+	if l.IPFamily == CONST_IPv4 {
 		parts = strings.Split(l.IP.String(), CONST_IPv4Delimiter)
 		parts = append(parts, strconv.Itoa((l.Port >> 8) & 0xff))
 		parts = append(parts, strconv.Itoa(l.Port & 0xff))
@@ -62,13 +64,7 @@ func FromPortSpecifier(dataPortMessage string) *Addr {
 
 	if port != -1 {
 		ip := net.ParseIP(strings.Join(parts[:4], CONST_IPv4Delimiter))
-
-		family := 1
-		if ip.To4() == nil {
-			family = 2
-		}
-
-		return &Addr{&ip, port, family}
+		return &Addr{&ip, port, CONST_IPv4}
 	}
 
 	return nil
@@ -86,6 +82,15 @@ func FromExtendedPortSpecifier(epsv string) *Addr {
 
 	if len(parts) == 5 {
 		family, _ := strconv.Atoi(parts[1])
+		if family != CONST_IPv4 && family != CONST_IPv6 {
+			/* Normalize ip family if invalid EPRT representation */
+			if strings.Contains(parts[2], ":") {
+				family = CONST_IPv6
+			} else {
+				family = CONST_IPv4
+			}
+		}
+
 		port, _ := strconv.Atoi(parts[3])
 		ip := net.ParseIP(parts[2])
 		return &Addr{&ip, port, family}
@@ -96,13 +101,13 @@ func FromExtendedPortSpecifier(epsv string) *Addr {
 
 /* Generates a Addr structure populated with the current connection's local host */
 func FromConnectionLocal(c net.Conn) *Addr {
-	var ipFamily int = 1 /* Assume IPv4 */
+	var ipFamily int = CONST_IPv4 /* Assume IPv4 */
 
 	addr := (c.LocalAddr()).(*net.TCPAddr)
 
 	/* Determine the ip version in use */
 	if addr.IP.To4() == nil {
-		ipFamily = 2 /* IPv6 */
+		ipFamily = CONST_IPv6 /* IPv6 */
 	}
 
 	return &Addr{&addr.IP, 0, ipFamily}
@@ -110,13 +115,13 @@ func FromConnectionLocal(c net.Conn) *Addr {
 
 /* Generates a Addr structure populated with the current connection's remote server */
 func FromConnection(c net.Conn) *Addr {
-	var ipFamily int = 1 /* Assume IPv4 */
+	var ipFamily int = CONST_IPv4 /* Assume IPv4 */
 
 	addr := (c.RemoteAddr()).(*net.TCPAddr)
 
 	/* Determine the ip version in use */
 	if addr.IP.To4() == nil {
-		ipFamily = 2 /* IPv6 */
+		ipFamily = CONST_IPv6 /* IPv6 */
 	}
 
 	return &Addr{&addr.IP, 0, ipFamily}

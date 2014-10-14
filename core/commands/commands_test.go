@@ -47,7 +47,7 @@ func TestStandardCommands(t *testing.T) {
 
 
 /* Scraper for: http://www.iana.org/assignments/ftp-commands-extensions/ftp-commands-extensions.xhtml */
-//var rows = document.getElementById("table-ftp-commands-extensions-2").querySelectorAll('tr'),
+//var rows = document.getElementById("table-ftp-commands-extensions-2").rows,
 //	commands = {all: []},
 //	tagName = "TD",
 //	i,
