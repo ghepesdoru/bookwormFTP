@@ -139,7 +139,7 @@ func (r *Reader) listen() {
 							if err != nil {
 								/* Break the loop on error */
 								r.errorChannel <- err
-								return
+								<- r.errorChannel
 							} else if n > 0 {
 								/* Forward data throw data channel */
 								r.dataChannel <- data[:n]
@@ -155,58 +155,44 @@ func (r *Reader) listen() {
 
 				/* Notify the end of the current action */
 				r.controlChannel <- SIG_Done
-				break
 
 			case SIG_WaitingForData:
 				/* The reading go routine is waiting for data, this might take forever, set a flag to sync data getter */
 				r.status = SIG_WaitingForData
 				r.controlChannel <- SIG_Done
-				break
 
 			case SIG_DataRead:
 				r.status = SIG_DataRead
 				r.controlChannel <- SIG_Done
-				break
 
 			case SIG_StopReading:
 				/* Stop the reading go routine */
 				r.active = false
-				break
 
 			case SIG_Reset:
 				/* Empty the raw read lines buffer */
 				r.rawData = []byte{}
 				r.controlChannel <- SIG_Done
-				break
 
 			default:
-				fmt.Println(fmt.Errorf("Uncaught signal: %d", sig))
-				break
-			}
-			break
+		}
 
 		/* Data read */
 		case data := <- r.dataChannel:
 			/* Append the newly read data to the raw data keeper */
 			r.rawData = append(r.rawData, data...)
-			break;
 
 		/* Data channel encountered an error. Stop reading, and remember the error! */
 		case err := <- r.errorChannel:
 			r.lastError = &err
 
 			if err == ERROR_EOF {
-				r.connAvailable = false
+				r.StopReading()
 			} else if err == ERROR_ConnectionClosed {
-				r.connAvailable = false
+				r.StopReading()
 			}
 
-			/* Notify the reader that no reading is taking place anymore */
-			go func(){
-				r.controlChannel <- SIG_StopReading
-			}()
-
-			break;
+			r.errorChannel <- nil
 		}
 	}
 }

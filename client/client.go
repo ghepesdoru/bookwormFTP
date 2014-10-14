@@ -12,9 +12,9 @@ import (
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
 	Commands "github.com/ghepesdoru/bookwormFTP/core/commands"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
-	Reader "github.com/ghepesdoru/bookwormFTP/core/readers/reader"
+	Reader "github.com/ghepesdoru/bookwormFTP/core/reader"
 	Response "github.com/ghepesdoru/bookwormFTP/core/response"
-	Parser "github.com/ghepesdoru/bookwormFTP/core/parsers/responseParser"
+	Parser "github.com/ghepesdoru/bookwormFTP/core/parser"
 	Settings "github.com/ghepesdoru/bookwormFTP/client/settings"
 	Credentials "github.com/ghepesdoru/bookwormFTP/core/credentials"
 )
@@ -146,7 +146,6 @@ var (
 /* BookwormFTP Client type definition */
 type Client struct {
 	connection net.Conn
-	dataConn net.Conn
 	dataAddr *net.TCPAddr
 	reader *Reader.Reader
 	credentials *Credentials.Credentials
@@ -224,7 +223,7 @@ func NewClient(address string) (client *Client, err error) {
 	settings.Get(OPT_Connected).Set(true)
 
 	/* Instantiate the new client */
-	client = &Client{conn, nil, nil, Reader.NewReader(conn), credentials, settings}
+	client = &Client{conn, nil, Reader.NewReader(conn), credentials, settings}
 
 	/* Grab server greeting, and check for server ready status */
 	welcomeMessage, _ := client.getResponse()
@@ -290,6 +289,21 @@ func (c *Client) getResponse() (response *Response.Response, err error) {
 	return
 }
 
+/* Data response fetcher */
+func (c *Client) getDataResponse() (response string, err error) {
+	conn, err := net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
+
+	if err == nil {
+		reader := Reader.NewReader(conn)
+		data := reader.Get()
+		response = string(data)
+		reader.StopReading()
+		conn.Close()
+	}
+
+	return
+}
+
 /* Checks the server availability for command execution */
 func (c *Client) serverReady() (ok bool) {
 	return (
@@ -342,6 +356,16 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 			return
 		}
 	}
+
+	if command.Name() == "LIST" && execute {
+		go func () {
+			fmt.Println("Special data requiring method:")
+			fmt.Println(c.getDataResponse())
+		}()
+
+		c.execute(command, isSequence, false, leftRetries)
+		return
+ 	}
 
 	/* Get the server response */
 	command.AttachResponse(c.getResponse())
@@ -1130,14 +1154,14 @@ func (c *Client) ToExtendedPassiveMode() (ok bool, err error) {
 		c.dataAddr = addr2.ToTCPAddr()
 
 		/* Establish a new data connection with the server using the specified port to verify availability */
-		c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
+		conn, err := net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
 
 		/* Mark the connection as being in passive mode */
 		if err == nil {
 			/* Reset passive mode flag, mark extended passive mode as active and close the test connection */
 			c.settings.Get(OPT_PassiveMode).Reset()
 			c.settings.Get(OPT_ExtendedPassive).Set(true)
-			c.dataConn.Close()
+			conn.Close()
 		} else {
 			/* Error connecting to remote server on data link */
 			command.AddError(ERR_InvalidDataConn)
@@ -1175,21 +1199,21 @@ func (c *Client) ToPassiveMode() (ok bool, err error) {
 			/* Register the new dataAddr */
 			c.dataAddr = addr.ToTCPAddr()
 
-			/* Establish data connection to verify dataAddr validity */
-			c.dataConn, err = net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
-
-			/* Mark the connection as being in passive mode */
-			if err == nil {
+//			/* Establish data connection to verify dataAddr validity */
+//			conn, err := net.DialTCP(CONST_ClientNetwork, nil, c.dataAddr)
+//
+//			/* Mark the connection as being in passive mode */
+//			if err == nil {
 				/* Reset extended passive mode flag, mark passive mode as active and close the test connection */
 				c.settings.Get(OPT_ExtendedPassive).Reset()
 				c.settings.Get(OPT_PassiveMode).Set(true)
-				c.dataConn.Close()
-			} else {
-				/* Error connecting to remote server on data link */
-				command.AddError(ERR_InvalidDataConn)
-			}
-		} else {
-			command.AddError(err)
+//				conn.Close()
+//			} else {
+//				/* Error connecting to remote server on data link */
+//				command.AddError(ERR_InvalidDataConn)
+//			}
+//		} else {
+//			command.AddError(err)
 		}
 	}
 

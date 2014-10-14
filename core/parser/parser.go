@@ -1,4 +1,4 @@
-package responseParser
+package parser
 
 import(
 	StatusCodes "github.com/ghepesdoru/bookwormFTP/core/codes"
