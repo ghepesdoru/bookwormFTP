@@ -7,9 +7,10 @@ import(
 )
 
 const (
-	CONST_NewLine = '\n'
-	CONST_NullChar = '\000'
-	CONST_CarriageReturn = '\r'
+	CONST_NewLine = 10
+	CONST_NullChar = 0
+	CONST_SpaceChar = 32
+	CONST_CarriageReturn = 13
 	CONST_Space = ' '
 	CONST_MultipleLinesResponseMark = '-'
 )
@@ -46,7 +47,7 @@ func (r *Parser) ParseBlock(block []byte) {
 				fmt.Println(fmt.Errorf(ERRF_ErrorParsing, err))
 				r.errors = append(r.errors, err)
 			}
-		} else {
+		} else if resp != nil {
 			r.responses = append(r.responses, resp)
 		}
 
@@ -104,15 +105,9 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 
 	/* Loop over each character of input source */
 	for cIdx, c := range raw {
-		if c == CONST_NewLine || cIdx == length {
-			/* End of line/input found, generate a line from the last line ending position */
-			if cIdx > 0 && raw[cIdx - 1] == CONST_CarriageReturn {
-				/* Exclude the carriage return from the current line */
-				line = raw[lastEOL:cIdx - 1]
-			} else {
-				line = raw[lastEOL:cIdx]
-			}
-
+		/* Greedy. Process only once we hit a non new line character. */
+		if (cIdx != length && (r.isNewLiner(c) && !r.isNewLiner(raw[cIdx + 1]))) || cIdx == length {
+			line = raw[lastEOL:cIdx]
 			line = r.trim(line)
 			lastEOL = cIdx
 
@@ -161,7 +156,6 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 							rawContent = append(rawContent, line[charConsumed:]...)
 							rawContent = append(rawContent, CONST_NewLine)
 						} else {
-							fmt.Println("Invalid status line:", string(line), status)
 							err = ERR_InvalidStatus
 						}
 					}
@@ -176,21 +170,33 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 	}
 
 	/* Ignore empty lines */
-	if consumed == 0 {
+	if consumed == 0 || (status == -1 && err == nil) {
 		if len(r.trim(raw)) == 0 {
 			consumed = len(raw)
-			err = ERR_EmptyInput
 		}
-	} else if status == -1 && err == nil {
+
 		err = ERR_EmptyInput
 	}
 
-	resp = response.NewResponse(status, rawContent, multipleLines)
-	return
+	if err == nil {
+		resp = response.NewResponse(status, rawContent, multipleLines)
+	} else {
+		resp = nil
+	}
+
+ 	return
 }
 
 func (r *Parser) isWhitespace(c byte) bool {
-	if c == CONST_NewLine || c == CONST_NullChar || c == CONST_NewLine || c == CONST_CarriageReturn {
+	if c == CONST_NullChar || c == CONST_SpaceChar || r.isNewLiner(c) {
+		return true
+	}
+
+	return false
+}
+
+func (r *Parser) isNewLiner(c byte) bool {
+	if c == CONST_NewLine || c == CONST_CarriageReturn {
 		return true
 	}
 
@@ -217,12 +223,16 @@ func (r *Parser) trimLeft(line []byte) []byte {
 
 func (r *Parser) trimRight(line []byte) []byte {
 	var length int = len (line) - 1
-	var end int = length + 1
+	var end int = length
 
-	for i := length; i > -1; i -= 1 {
+	for i := length; i >= 0; i -= 1 {
 		if r.isWhitespace(line[i]) && end == i {
 			end -= 1
 		}
+	}
+
+	if end < (length + 1) {
+		end += 1
 	}
 
 	return line[:end]
