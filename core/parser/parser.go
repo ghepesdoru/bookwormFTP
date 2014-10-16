@@ -99,83 +99,90 @@ func (r *Parser) LastError() error {
 /* Response parser utility. Parses one response at a time, and returns the parsed response, number of consumed bytes,
  and any errors if required */
 func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err error) {
-	var line, rawStatus, rawContent []byte
-	var charConsumed, status, lineStatus, length, lastEOL int = -1, -1, 0, len(raw) - 1, 0
+	var line, rawContent []byte
+	var status, lineStatus, length, last, lastEOL, i, j, lineLength, count, linesCount int = -1, -1, len(raw), len(raw) - 1, 0, 0, 0, 0, 0, 0
 	var multipleLines bool
 
-	/* Loop over each character of input source */
-	for cIdx, c := range raw {
-		/* Greedy. Process only once we hit a non new line character. */
-		if (cIdx != length && (r.isNewLiner(c) && !r.isNewLiner(raw[cIdx + 1]))) || cIdx == length {
-			line = raw[lastEOL:cIdx]
-			line = r.trim(line)
-			lastEOL = cIdx
+	/* Loop over each character of the input */
+	for i < length {
+		c := raw[i]
 
-			/* Reset the line status buffer */
-			rawStatus = []byte{}
+		/* Greedy. Process once we hit the first non new line character. */
+		if i == last || (r.isNewLiner(c) && !r.isNewLiner(raw[i + 1])) {
+			line = r.trimRight(raw[lastEOL:i])
+			lastEOL = i
 
-			if len(line) != 0 {
-				/* Look over the current line content's, extracting the status code, and eating spaces */
-				for i, c := range line {
-					if i < 3 && StatusCodes.ByteIsNumber(c) {
-						rawStatus = append(rawStatus, c)
-						charConsumed = i
-					} else if !multipleLines && c == CONST_MultipleLinesResponseMark {
-						/* Check for multiple lines response mark */
-						multipleLines = true
-						charConsumed = i + 1 /* Exclude the multiple line token from the output */
-					} else if c != CONST_Space {
-						charConsumed = i
+			/* Skip empty lines */
+			lineLength = len(line)
+			if lineLength == 0 {
+				i += 1
+				continue
+			}
+
+			lineStatus = -1
+			count = 0
+			for j = 0; j < lineLength; {
+				s := line[j]
+
+				/* Consume whitespaces, and new line */
+				if !r.isWhitespace(s) {
+					count += 1
+
+					if count <= 3 && StatusCodes.ByteIsNumber(s) {
+						/* The line status has to be contained within the first 3 visible characters */
+						if lineStatus == -1 {
+							lineStatus = StatusCodes.ToInt([]byte{s})
+						} else {
+							lineStatus = lineStatus * 10 + StatusCodes.ToInt([]byte{s})
+						}
+					} else if !multipleLines && s == CONST_MultipleLinesResponseMark {
+						/* Fill in case. The multiple lines flag will be determined by valid lines count. */
+					} else {
+						/* The current character is part of the message body. Break. */
 						break
 					}
 				}
 
-				/* Convert status to a number */
-				lineStatus = StatusCodes.ToInt(rawStatus)
-
-				/* Convert multiple lines with the same status to the same response message */
-				if (lineStatus == -1 && len(rawStatus) == 0) || status == lineStatus || status == -1 {
-					/* Remember the current index for the consumed characters in input */
-					consumed = cIdx
-
-					/* Check for invalid format responses */
-					if status == -1 && lineStatus == -1 {
-						err = ERR_InvalidFormat
-					} else {
-						if status < 0 {
-							/* First time assignment */
-							status = lineStatus
-						}
-
-						if StatusCodes.IsValid(status) {
-							/* Check if this is a wrong formatted multiple lines response */
-							if !multipleLines && len(rawContent) > 0 {
-								multipleLines = true
-							}
-
-							line = line[charConsumed:]
-
-							/* Ignore empty lines */
-							if len(line) > 0 {
-								rawContent = append(rawContent, line...)
-								rawContent = append(rawContent, CONST_NewLine)
-							}
-						} else {
-							err = ERR_InvalidStatus
-						}
-					}
-				} else {
-					/* Passed the boundaries of the previous response. Break here! */
-					break
-				}
+				j += 1
 			}
-		} else {
-			consumed = cIdx
+
+			if (status == -1 && lineStatus != -1) || (lineStatus == -1 && status != -1) || (status == lineStatus && status != -1)  {
+				/* First row of a response. Remember the response's status. */
+				if status == -1 {
+					if StatusCodes.IsValid(lineStatus) {
+						status = lineStatus
+					} else {
+						/* Invalid response status code. */
+						err = ERR_InvalidStatus
+						break
+					}
+				}
+
+				line = line[j:]
+
+				/* Ignore empty lines */
+				if j < (lineLength - 1) {
+					rawContent = append(rawContent, append(line, []byte{10}...)...)
+					linesCount += 1
+				}
+
+				/* Remember the consumed bytes */
+				consumed = i
+			} else {
+				if status == -1 {
+					/* Invalid line format */
+					err = ERR_InvalidFormat
+				}
+
+				break
+			}
 		}
+
+		i += 1
 	}
 
 	/* Ignore empty lines */
-	if consumed == 0 || (status == -1 && err == nil) {
+	if err == nil && (consumed == 0 || status == -1) {
 		if len(r.trim(raw)) == 0 {
 			consumed = len(raw)
 		}
@@ -184,6 +191,11 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 	}
 
 	if err == nil {
+		if !multipleLines && linesCount > 1 {
+			/* The current response contains multiple rows. No matter of the representation correctness */
+			multipleLines = true
+		}
+
 		resp = response.NewResponse(status, rawContent, multipleLines)
 	} else {
 		resp = nil
