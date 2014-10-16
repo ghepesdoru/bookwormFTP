@@ -153,8 +153,13 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 								multipleLines = true
 							}
 
-							rawContent = append(rawContent, line[charConsumed:]...)
-							rawContent = append(rawContent, CONST_NewLine)
+							line = line[charConsumed:]
+
+							/* Ignore empty lines */
+							if len(line) > 0 {
+								rawContent = append(rawContent, line...)
+								rawContent = append(rawContent, CONST_NewLine)
+							}
 						} else {
 							err = ERR_InvalidStatus
 						}
