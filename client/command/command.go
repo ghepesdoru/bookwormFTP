@@ -29,76 +29,6 @@ func NewCommand(command string, parameters string, statuses []int) *Command {
 	return &Command{command, parameters, status, true, []error{}, &Response.Response{}}
 }
 
-/* Command name getter */
-func (c *Command) Name() string {
-	return c.command
-}
-
-/* Checks if the specified status can represent a command success status */
-func (c *Command) IsExpectedStatus (status int) bool {
-	if _, ok := c.status[status]; ok {
-		return ok
-	}
-
-	return false
-}
-
-/* Generates a list of expected statuses separated by pipes */
-func (c *Command) ExpectedStatus() string {
-	var statuses []string
-
-	for s, _ := range c.status {
-		statuses = append(statuses, strconv.Itoa(s))
-	}
-
-	return strings.Join(statuses, "|")
-}
-
-/* Checks if the current command completed successfully after it's execution */
-func (c *Command) Success() bool {
-	return c.ok
-}
-
-/* Grabs the current command errors */
-func (c *Command) Errors() []error {
-	return c.err
-}
-
-/* Returns the first error message found */
-func (c *Command) Error() string {
-	if len(c.err) > 0 {
-		return c.err[0].Error()
-	}
-
-	return ""
-}
-
-/* Flushes all errors */
-func (c *Command) FlushErrors() []error {
-	err := c.err
-	c.err = []error{}
-	return err
-}
-
-/* Grabs the last error triggered by the current command */
-func (c *Command) LastError() error {
-	if l := len(c.err); l > 0 {
-		return c.err[l - 1]
-	}
-
-	return nil
-}
-
-/* Command parameters getter */
-func (c *Command) Parameters() string {
-	return c.parameters
-}
-
-/* Checks if the current command has attached parameters */
-func (c *Command) HasParameters() bool {
-	return len(c.parameters) > 0
-}
-
 /* Adds a new error to the command errors list */
 func (c *Command) AddError(err error) {
 	if err != nil {
@@ -117,12 +47,82 @@ func (c *Command) AttachResponse(response *Response.Response, err error) {
 	c.response = response
 }
 
-/* Checks if an acctual response was attached to the current command */
-func (c *Command) ValidResponse() bool {
-	return c.response != nil && c.response.Status() != 0
+/* Returns the first error message found */
+func (c *Command) Error() string {
+	if len(c.err) > 0 {
+		return c.err[0].Error()
+	}
+
+	return ""
+}
+
+/* Grabs the current command errors */
+func (c *Command) Errors() []error {
+	return c.err
+}
+
+/* Generates a list of expected statuses separated by pipes */
+func (c *Command) ExpectedStatus() string {
+	var statuses []string
+
+	for s, _ := range c.status {
+		statuses = append(statuses, strconv.Itoa(s))
+	}
+
+	return strings.Join(statuses, "|")
+}
+
+/* Flushes all errors */
+func (c *Command) FlushErrors() []error {
+	err := c.err
+	c.err = []error{}
+	return err
+}
+
+/* Checks if the current command has attached parameters */
+func (c *Command) HasParameters() bool {
+	return len(c.parameters) > 0
+}
+
+/* Checks if the specified status can represent a command success status */
+func (c *Command) IsExpectedStatus (status int) bool {
+	if _, ok := c.status[status]; ok {
+		return ok
+	}
+
+	return false
+}
+
+/* Checks if a valid response was attached to the current command */
+func (c *Command) IsValidResponse() bool {
+	return c.response != nil && c.IsExpectedStatus(c.response.Status())
+}
+
+/* Grabs the last error triggered by the current command */
+func (c *Command) LastError() error {
+	if l := len(c.err); l > 0 {
+		return c.err[l - 1]
+	}
+
+	return nil
+}
+
+/* Command name getter */
+func (c *Command) Name() string {
+	return c.command
+}
+
+/* Command parameters getter */
+func (c *Command) Parameters() string {
+	return c.parameters
 }
 
 /* Command response getter */
 func (c *Command) Response() *Response.Response {
 	return c.response
+}
+
+/* Checks if the current command completed successfully after it's execution */
+func (c *Command) Success() bool {
+	return c.ok
 }
