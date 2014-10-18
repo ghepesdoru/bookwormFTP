@@ -1,9 +1,16 @@
 package commands
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 const (
-	CONST_UnknownCommand = "Unknown"
+	UnknownCommand = "Unknown"
+)
+
+var (
+	ERR_InvalidCommandName = fmt.Errorf("Invalid command.")
 )
 
 /* Defines a map of known commands */
@@ -64,6 +71,6 @@ func ToStandardCommand(cmd string) string {
 		return ObsoleteToKnown[cmd]
 	}
 
-	return CONST_UnknownCommand
+	return UnknownCommand
 }
 

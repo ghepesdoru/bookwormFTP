@@ -47,6 +47,11 @@ func (c *Command) AttachResponse(response *Response.Response, err error) {
 	c.response = response
 }
 
+/* Command serialization as byte array */
+func (c *Command) Byte() []byte {
+	return []byte(c.String())
+}
+
 /* Returns the first error message found */
 func (c *Command) Error() string {
 	if len(c.err) > 0 {
@@ -125,4 +130,13 @@ func (c *Command) Response() *Response.Response {
 /* Checks if the current command completed successfully after it's execution */
 func (c *Command) Success() bool {
 	return c.ok
+}
+
+/* Serialize as string */
+func (c *Command) String() string {
+	if c.HasParameters() {
+		return c.Name() + " " + c.Parameters()
+	}
+
+	return c.Name()
 }
