@@ -10,12 +10,12 @@ import (
 
 /* Constants definition */
 const (
-	CONST_EPRTFormat = "|%d|%s|%d|"
-	CONST_EPRTDelimiter = "|"
-	CONST_IPv4Delimiter = "."
-	CONST_PortDelimiter = ","
-	CONST_IPv4			= 1
-	CONST_IPv6			= 2
+	EPRTFormat = "|%d|%s|%d|"
+	EPRTDelimiter = "|"
+	IPv4Delimiter = "."
+	PortDelimiter = ","
+	IPv4			= 1
+	IPv6			= 2
 )
 
 var (
@@ -36,12 +36,12 @@ func (l *Addr) ToPortSpecifier() string {
 	var parts []string
 
 	/* Only for IPv4 */
-	if l.IPFamily == CONST_IPv4 {
-		parts = strings.Split(l.IP.String(), CONST_IPv4Delimiter)
+	if l.IPFamily == IPv4 {
+		parts = strings.Split(l.IP.String(), IPv4Delimiter)
 		parts = append(parts, strconv.Itoa((l.Port >> 8) & 0xff))
 		parts = append(parts, strconv.Itoa(l.Port & 0xff))
 
-		return strings.Join(parts, CONST_PortDelimiter)
+		return strings.Join(parts, PortDelimiter)
 	}
 
 	return ""
@@ -51,7 +51,7 @@ func (l *Addr) ToPortSpecifier() string {
 func FromPortSpecifier(dataPortMessage string) *Addr {
 	var port int = -1
 	ipAndPort := MatchHostAndPort.FindString(dataPortMessage)
-	parts := strings.Split(ipAndPort, CONST_PortDelimiter)
+	parts := strings.Split(ipAndPort, PortDelimiter)
 
 	if len(parts) == 6 {
 		p1, e1 := strconv.Atoi(parts[4])
@@ -63,8 +63,8 @@ func FromPortSpecifier(dataPortMessage string) *Addr {
 	}
 
 	if port != -1 {
-		ip := net.ParseIP(strings.Join(parts[:4], CONST_IPv4Delimiter))
-		return &Addr{&ip, port, CONST_IPv4}
+		ip := net.ParseIP(strings.Join(parts[:4], IPv4Delimiter))
+		return &Addr{&ip, port, IPv4}
 	}
 
 	return nil
@@ -72,22 +72,22 @@ func FromPortSpecifier(dataPortMessage string) *Addr {
 
 /* Generate a EPRT compatible representation of the current address  */
 func (l *Addr) ToExtendedPortSpecifier() string {
-	return fmt.Sprintf(CONST_EPRTFormat, l.IPFamily, l.IP.String(), l.Port)
+	return fmt.Sprintf(EPRTFormat, l.IPFamily, l.IP.String(), l.Port)
 }
 
 /* Generates a Addr from a EPRT compatible representation */
 func FromExtendedPortSpecifier(epsv string) *Addr {
 	input := MatchEPSVResponse.FindString(epsv)
-	parts := strings.Split(input, CONST_EPRTDelimiter)
+	parts := strings.Split(input, EPRTDelimiter)
 
 	if len(parts) == 5 {
 		family, _ := strconv.Atoi(parts[1])
-		if family != CONST_IPv4 && family != CONST_IPv6 {
+		if family != IPv4 && family != IPv6 {
 			/* Normalize ip family if invalid EPRT representation */
 			if strings.Contains(parts[2], ":") {
-				family = CONST_IPv6
+				family = IPv6
 			} else {
-				family = CONST_IPv4
+				family = IPv4
 			}
 		}
 
@@ -101,13 +101,13 @@ func FromExtendedPortSpecifier(epsv string) *Addr {
 
 /* Generates a Addr structure populated with the current connection's local host */
 func FromConnectionLocal(c net.Conn) *Addr {
-	var ipFamily int = CONST_IPv4 /* Assume IPv4 */
+	var ipFamily int = IPv4 /* Assume IPv4 */
 
 	addr := (c.LocalAddr()).(*net.TCPAddr)
 
 	/* Determine the ip version in use */
 	if addr.IP.To4() == nil {
-		ipFamily = CONST_IPv6 /* IPv6 */
+		ipFamily = IPv6 /* IPv6 */
 	}
 
 	return &Addr{&addr.IP, 0, ipFamily}
@@ -115,19 +115,41 @@ func FromConnectionLocal(c net.Conn) *Addr {
 
 /* Generates a Addr structure populated with the current connection's remote server */
 func FromConnection(c net.Conn) *Addr {
-	var ipFamily int = CONST_IPv4 /* Assume IPv4 */
+	var ipFamily int = IPv4 /* Assume IPv4 */
 
 	addr := (c.RemoteAddr()).(*net.TCPAddr)
 
 	/* Determine the ip version in use */
 	if addr.IP.To4() == nil {
-		ipFamily = CONST_IPv6 /* IPv6 */
+		ipFamily = IPv6 /* IPv6 */
 	}
 
 	return &Addr{&addr.IP, 0, ipFamily}
 }
 
+/* Checks if the specified ip address is of IPv4 format */
+func IsIPv4(ip *net.IP) bool {
+	if ip.To4() != nil {
+		return true
+	}
+
+	return false
+}
+
 /* Converts the current Address to a net.TCPAddr */
 func (l *Addr) ToTCPAddr() *net.TCPAddr {
 	return &net.TCPAddr{*l.IP, l.Port, ""}
+}
+
+/* String representation of the IP */
+func (l *Addr) String() string {
+	return net.JoinHostPort(l.IP.String(), strconv.Itoa(l.Port))
+}
+
+func (l *Addr) Network() string {
+	if l.IPFamily == IPv4 {
+		return "tcp4"
+	}
+
+	return "tcp6"
 }
