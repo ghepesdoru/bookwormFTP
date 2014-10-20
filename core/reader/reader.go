@@ -25,8 +25,8 @@ const (
 
 /* Read delay constant */
 var (
-	DELAY_READ time.Duration = 50 * time.Millisecond
-	DELAY_WAIT_FOR_READ time.Duration = 150 * time.Millisecond
+	DELAY_READ time.Duration = 100 * time.Millisecond
+	DELAY_WAIT_FOR_READ time.Duration = 100 * time.Millisecond
 	ERROR_ConnectionClosed = fmt.Errorf("use of closed network connection")
 	ERROR_EOF	= io.EOF
 	STATUS = map[int]string {

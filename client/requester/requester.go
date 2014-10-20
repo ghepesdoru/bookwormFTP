@@ -1,8 +1,9 @@
-package client
+package requester
 
 import(
 	"fmt"
 	"strconv"
+	"time"
 	"net/url"
 	Net "net"
 	Path "path"
@@ -13,57 +14,19 @@ import(
 	Parser "github.com/ghepesdoru/bookwormFTP/core/parser"
 	Reader "github.com/ghepesdoru/bookwormFTP/core/reader"
 	Response "github.com/ghepesdoru/bookwormFTP/core/response"
-	Settings "github.com/ghepesdoru/bookwormFTP/client/settings"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
 )
 
 const (
 	/* Generic constants */
-	DefaultClientProtocol = "tcp"
+	DefaultRequesterProtocol = "tcp"
 	DefaultHostPort = 21
 	DefaultUserName = "anonymous"
 	DefaultPassword	= ""
 	DefaultDataPort = -1
+	DefaultWorkingDir = "/"
 	EmptyString		= ""
 	CommandRetries 	= 3
-
-	/* Connection option names */
-	OPT_Connected 		= "connected"
-	OPT_ServerReady 	= "ready"
-	OPT_InitialPath 	= "initial_path"
-	OPT_InitialFile		= "initail_file"
-	OPT_Disconnected 	= "disconnected"
-	OPT_Authenticated 	= "logged_in"
-	OPT_PassiveMode		= "passive"
-	OPT_ExtendedPassive = "extended_passive"
-	OPT_Account			= "account"
-	OPT_AccountEnabled = "account_active"
-	OPT_TransferMode	= "transfer_mode"
-	OPT_DataType		= "data_type"
-	OPT_FormatControl	= "format_control"
-	OPT_ByteSize		= "byte_size"
-	OPT_FileStructure	= "file_structure"
-
-	/* Types */
-	TYPE_Ascii			= "A"
-	TYPE_Ebcdic			= "E"
-	TYPE_Image			= "I"
-	TYPE_LocalByte		= "L"
-
-	/* Format controls */
-	FMTCTRL_NonPrint	= "N"
-	FMTCTRL_Telnet		= "T"
-	FMTCTRL_Carriage	= "C"
-
-	/* Transfer modes */
-	TRANSFER_Stream		= "S"
-	TRANSFER_Block		= "B"
-	TRANSFER_Compressed	= "C"
-	TRANSFER_Unspecified= "U"
-
-	FILESTRUCT_File		= "F"
-	FILESTRUCT_Record	= "R"
-	FILESTRUCT_Page		= "P"
 )
 
 /* Error definitions */
@@ -77,6 +40,7 @@ var (
 	ERR_ServerNotReady		 	= fmt.Errorf("Server is disconnected or otherwise unavailable.")
 	ERR_NoServerResponse	 	= fmt.Errorf("Unable to fetch a response from server at this time.")
 	ERR_RestartSequence		 	= fmt.Errorf("Restart sequence.")
+	ERR_InvalidDataAddr			= fmt.Errorf("Invalid data connection Addr.")
 
 	/* Error formats */
 	ERRF_InvalidCommandName = "Command error: Unrecognized command %s."
@@ -87,41 +51,94 @@ var (
 	ERRF_MissingPortInHost = "missing port in address"
 )
 
-/* BookwormFTP Client type definition */
-type Client struct {
+/* BookwormFTP Requester type definition */
+type Requester struct {
 	controlConnection	Net.Conn
 	controlReader		*Reader.Reader
 	dataReader			*Reader.Reader
 	hostAddress			*Address.Addr
 	dataAddress			*Address.Addr
 	credentials			*Credentials.Credentials
-	settings			*Settings.Settings
-	workingDir			string
+	initDir				string
+	initFile			string
+	connected			bool
+	ready				bool
 }
 
-/* Instantiate a new client that can exclusively use the IPv4 */
-func NewClientIPv4(hostURL string) (*Client, error) {
-	return preprocessClientBuild(hostURL, Address.IPv4)
+/* Generates a new Requester using any of the supported ip versions. (IPv4 first) */
+func NewRequester(hostURL string) (r *Requester, err error) {
+	r, err = NewRequesterIPv4(hostURL)
+	if err != nil {
+		r, err = NewRequesterIPv6(hostURL)
+	}
+
+	return
 }
 
-/* Instantiate a new client that can exclusively use the IPv6 */
-func NewClientIPv6(hostURL string) (*Client, error) {
-	return preprocessClientBuild(hostURL, Address.IPv6)
+/* Instantiate a new Requester that can exclusively use the IPv4 */
+func NewRequesterIPv4(hostURL string) (*Requester, error) {
+	return preprocessRequesterBuild(hostURL, Address.IPv4)
+}
+
+/* Instantiate a new Requester that can exclusively use the IPv6 */
+func NewRequesterIPv6(hostURL string) (*Requester, error) {
+	return preprocessRequesterBuild(hostURL, Address.IPv6)
+}
+
+func (r *Requester) GetHostAddr() (*Address.Addr) {
+	return Address.FromConnection(r.controlConnection)
+}
+
+/* Getter for the current requester registered hostURL path segments */
+func (r *Requester) GetInitialPath() (string, string) {
+	return r.initDir, r.initFile
+}
+
+/* Checks if the current requester is connected */
+func (r *Requester) IsConnected() bool {
+	return r.connected
+}
+
+/* Checks if the current requester is ready */
+func (r *Requester) IsReady() bool {
+	return r.ready
+}
+
+/* Register data address */
+func (r *Requester) RegisterDataAddr(addr *Address.Addr) (bool, error) {
+	if nil == addr {
+		return false, ERR_InvalidDataAddr
+	}
+
+	/* Correct Addr that only specify a port */
+	if addr.IP == nil {
+		addr2 := r.GetHostAddr()
+		addr.IP = addr2.IP
+		addr.IPFamily = addr2.IPFamily
+	}
+
+	r.dataAddress = addr
+	return true, nil
 }
 
 /* Make a request to the server */
-func (c *Client) Request(command *Command.Command) (*Command.Command) {
-	c.execute(command, false, true, CONST_CommandRetries)
+func (r *Requester) Request(command *Command.Command) (*Command.Command) {
+	r.execute(command, false, true, CommandRetries)
 	return command
 }
 
-/* Make a sequence of requests */
-func (c *Client) Sequence(commands ...*Command.Command) (bool, *Command.Command) {
-	return c.sequence(commands)
+/* Make a data request to the server */
+func (r *Requester) RequestData(command *Command.Command) (*Command.Command, []byte) {
+	return r.executeDataCommand(command)
 }
 
-/* Prepares required data for the new client instance to be build */
-func preprocessClientBuild(hostURL string, ipFamily int) (*Client, error) {
+/* Make a sequence of requests */
+func (r *Requester) Sequence(commands ...*Command.Command) (bool, *Command.Command) {
+	return r.sequence(commands)
+}
+
+/* Prepares required data for the new Requester instance to be build */
+func preprocessRequesterBuild(hostURL string, ipFamily int) (*Requester, error) {
 	var host, path string
 	var port int
 	var credentials *Credentials.Credentials
@@ -130,7 +147,7 @@ func preprocessClientBuild(hostURL string, ipFamily int) (*Client, error) {
 
 	if host, port, path, credentials, err = getHostParsedUrl(hostURL); err == nil {
 		if addr, err = getHostAddr(host, port, ipFamily); err == nil {
-			return buildClient(addr, credentials, path)
+			return buildRequester(addr, credentials, path)
 		}
 	}
 
@@ -211,71 +228,46 @@ func getHostAddr(host string, port int, ipFamily int) (*Address.Addr, error)  {
 	return nil, ERR_UnableToLookupHost
 }
 
-/* Private Client builder */
-func buildClient(hostAddr *Address.Addr, credentials *Credentials.Credentials, navigateTo string) (client *Client, err error) {
+/* Private Requester builder */
+func buildRequester(hostAddr *Address.Addr, credentials *Credentials.Credentials, navigateTo string) (requester *Requester, err error) {
 	var conn Net.Conn
-	var settings *Settings.Settings = Settings.NewSettings(
-		/* Define current connection settings with default values */
-		Settings.NewOption(OPT_Connected, false),					/* There is a connection to the host */
-		Settings.NewOption(OPT_ServerReady, false),					/* The server send it's welcome message? */
-		Settings.NewOption(OPT_Disconnected, false),				/* A QUIT command was called? */
-		Settings.NewOption(OPT_Authenticated, false),				/* A user is currently authenticated */
-		Settings.NewOption(OPT_PassiveMode, false), 				/* Is the Client in passive mode at the time */
-		Settings.NewOption(OPT_ExtendedPassive, false), 			/* Is extended passive mode ? */
-		Settings.NewOption(OPT_Account, EmptyString),			/* Default account */
-		Settings.NewOption(OPT_AccountEnabled, false),				/* No active account */
-		Settings.NewOption(OPT_TransferMode, TRANSFER_Unspecified), /* The connection has no specified transfer mode at this point */
-		Settings.NewOption(OPT_DataType, TYPE_Ascii), 				/* Presume ASCII as default data type */
-		Settings.NewOption(OPT_FormatControl, FMTCTRL_NonPrint), 	/* Presume non print format control */
-		Settings.NewOption(OPT_ByteSize, 8),						/* Assume a 8 bit byte size */
-		Settings.NewOption(OPT_FileStructure, FILESTRUCT_File), 	/* Default to the file structure of file */
-	)
+	var dir, file string
 
 	conn, err = Net.Dial(hostAddr.Network(), hostAddr.String())
 	if err != nil {
 		return /* Return with the original Dial generated error. */
 	}
 
-	/* Connected successfully */
-	settings.Get(OPT_Connected).Set(true)
-
-	/* Instantiate the new client */
-	client = &Client{conn, Reader.NewReader(conn), nil, hostAddr, nil, credentials, settings, "/"}
-
 	/* Register the initial navigation path if available */
 	if len(navigateTo) > 0 {
-		dir := client.toAbsolutePath(navigateTo) 	/* Normalize to an absolute path directory */
-		_, file := client.extractPathElements(navigateTo) /* Extract file name */
+		navigateTo = "/" + navigateTo
+		navigateTo = Path.Clean(navigateTo)
+		dir, file = Path.Split(navigateTo)
 
-		if len(dir) > 0 && dir != client.workingDir {
-			client.settings.Get(OPT_InitialPath).Set(dir)
-		}
-
-		if len(file) > 0 {
-			client.settings.Get(OPT_InitialFile).Set(file)
+		if len(dir) == 0 || dir == DefaultWorkingDir {
+			dir = EmptyString
 		}
 	}
 
+	/* Instantiate the new Requester */
+	requester = &Requester{conn, Reader.NewReader(conn), nil, hostAddr, nil, credentials, dir, file, true, false}
+
 	/* Grab server greeting, and check for server ready status */
-	welcomeMessage, _ := client.getResponse()
+	welcomeMessage, _ := requester.getResponse()
 	if welcomeMessage != nil {
 		if Status.Ready == welcomeMessage.Status() {
 			/* Server ready */
-			settings.Get(OPT_ServerReady).Set(true)
+			requester.ready = true
 		}
 	}
-
-	// TODO: Authenticate once the command will be available and navigate to OPT_InitialPath and download OPT_InitialFile if available.
-	fmt.Println(client)
-	fmt.Println(welcomeMessage)
 
 	return
 }
 
 /* Reads a response taking the data connection into account. */
-func (c *Client) getResponse() (response *Response.Response, err error) {
+func (r *Requester) getResponse() (response *Response.Response, err error) {
 	var parser *Parser.Parser = Parser.NewParser()
-	var raw []byte = c.controlReader.Get()
+	var raw []byte = r.controlReader.Get()
 
 	/* Parse the read content */
 	parser.ParseBlock(raw)
@@ -302,120 +294,86 @@ func (c *Client) getResponse() (response *Response.Response, err error) {
 }
 
 /* Initializes a new data connection based on the current dataAddress value */
-func (c *Client) establishDataConnection() (conn Net.Conn, err error) {
-	if c.inPassiveMode() {
-		if c.dataAddress != nil {
-			conn, err = Net.Dial(c.dataAddress.Network(), c.dataAddress.String())
-		} else {
-			err = ERR_InvalidDataAddress
-		}
+func (r *Requester) establishDataConnection() (conn Net.Conn, err error) {
+	if r.dataAddress != nil {
+		conn, err = Net.Dial(r.dataAddress.Network(), r.dataAddress.String())
+		return
+	} else {
+		err = ERR_InvalidDataAddress
 	}
 
 	return nil, ERR_CanNotEstablishDataConn
 }
 
 /* Start listening for incoming data in the data channel */
-func (c *Client) listenDataChannel() (ok bool, err error) {
+func (r *Requester) listenDataChannel() (ok bool, err error) {
 	var dataConnection Net.Conn
 
-	if c.dataReader != nil {
+	if r.dataReader != nil {
 		/* Stop the old reader from reading, and instantiate a new one for the current data connection. */
-		c.dataReader.StopReading()
-
-		dataConnection, err = c.establishDataConnection()
-
-		if err == nil {
-			c.dataReader = Reader.NewReader(dataConnection)
-			ok = true
-		}
+		r.dataReader.StopReading()
 	}
 
-	return ok, nil
+	dataConnection, err = r.establishDataConnection()
+
+	if err == nil {
+		r.dataReader = Reader.NewReader(dataConnection)
+		ok = true
+	}
+
+	return ok, err
 }
 
 /* Close the data channel and return all collected data */
-func (c *Client) closeDataChannel() (ok bool, data []byte) {
-	if c.dataReader != nil {
-		data = c.dataReader.GetBlock()
-		c.dataReader.StopReading()
-		c.dataReader = nil
+func (r *Requester) closeDataChannel() (ok bool, data []byte) {
+	if r.dataReader != nil {
+		data = r.dataReader.Get()
+		r.dataReader.StopReading()
+		r.dataReader = nil
 		ok = true
 	}
 
 	return ok, data
 }
 
-/* Checks if the client is in any of the passive modes */
-func (c *Client) inPassiveMode() bool {
-	if c.settings.Get(OPT_PassiveMode).Is(true) || c.settings.Get(OPT_ExtendedPassive).Is(true) {
-		return true
-	}
-
-	return false
-}
-
-/* Checks the server availability for command execution */
-func (c *Client) serverReady() (ok bool) {
-	return (
-			c.settings.Get(OPT_Connected).Is(true) &&
-			c.settings.Get(OPT_ServerReady).Is(true) &&
-			c.settings.Get(OPT_Disconnected).Is(false))
-}
-
-/* Extracts the current path parts (directories and file) from the specified input */
-func (c *Client) extractPathElements(p string) (dir string, file string) {
-	p = Path.Clean(p)
-	return Path.Split(p)
-}
-
-/* Given a relative path, will concatenate it with the current working directory and normalize it */
-func (c *Client) toAbsolutePath (d string) string {
-	if !Path.IsAbs(d) {
-		/* Not an absolute path, concatenate the relative path to the working directory, and normalize them together  */
-		d = c.workingDir + "/" + d
-		d, _ = c.extractPathElements(d)
-	}
-
-	return d
-}
-
 /* Makes requests to the server based on provided Command contents */
-func (c *Client) request(command *Command.Command) (bool, error) {
+func (r *Requester) request(command *Command.Command) (bool, error) {
 	var EOL []byte = []byte("\r\n")
 
 	/* Send the request to the server */
-	n, err := c.controlConnection.Write(append(command.Byte(), EOL...))
-
+	n, err := r.controlConnection.Write(append(command.Byte(), EOL...))
 	return n > 0, err
 }
 
 /* Executes the specified command listening on the data connection. */
-func (c *Client) executeDataCommand(command *Command.Command) (data []byte) {
+func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Command, []byte) {
 	var err error
 
 	/* Listen for incoming data on the data connection (if required) */
-	_, err = c.listenDataChannel()
+	_, err = r.listenDataChannel()
 
 	if err != nil {
 		command.AddError(err)
-		return
+		return command, []byte{}
 	}
 
-	c.execute(command, false, true, CommandRetries)
-	_, data = c.closeDataChannel()
+	r.execute(command, false, true, CommandRetries)
+	_, data := r.closeDataChannel()
 
-	return
+	fmt.Println("Command status:", command.Success(), command.Response(), command.LastError())
+
+	return command, data
 }
 
 /* Executes a command (wrapper around request, takes care of response reading, error handling, and is status aware) */
-func (c *Client) execute(command *Command.Command, isSequence bool, execute bool, leftRetries int) {
+func (r *Requester) execute(command *Command.Command, isSequence bool, execute bool, leftRetries int) {
 	var err error
 
 	if command.Name() == Commands.UnknownCommand {
 		command.AddError(Commands.ERR_InvalidCommandName)
 	}
 
-	if !c.serverReady() {
+	if !r.IsReady() {
 		/* Do not make requests on closed connections */
 		command.AddError(ERR_ServerNotReady)
 		return
@@ -423,18 +381,28 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 
 	/* Execute the command */
 	if execute {
-		_, err = c.request(command)
+		_, err = r.request(command)
 		execute = false
 
 		/* Error communicating to server */
 		if err != nil {
 			command.AddError(err)
 			return
+		} else {
+			/* Get the server response */
+			command.AttachResponse(r.getResponse())
 		}
-	}
+	} else {
+		t := time.Now()
+		/* Block until the server responds */
+		for len(r.controlReader.Peek()) == 0 {
+			time.Sleep(100 * time.Millisecond)
+			fmt.Println("Waiting for server response since: ", time.Since(t))
+		}
 
-	/* Get the server response */
-	command.AttachResponse(c.getResponse())
+		/* Get the server response */
+		command.AttachResponse(r.getResponse())
+	}
 
 	if command.Response() == nil {
 		/* Empty server response */
@@ -455,7 +423,7 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 
 	if first == 1 {
 		/* Positive Preliminary reply - wait for a new response */
-		c.execute(command, isSequence, execute, leftRetries)
+		r.execute(command, isSequence, execute, leftRetries)
 		return
 	} else if first == 2 {
 		/* Positive Completion reply - action completed successfully, no matter of the expected status */
@@ -479,7 +447,7 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 				command.AddError(ERR_RestartSequence)
 			} else {
 				/* Try again to execute this command */
-				c.execute(command, isSequence, true, leftRetries - 1)
+				r.execute(command, isSequence, true, leftRetries - 1)
 				return
 			}
 		}
@@ -490,14 +458,13 @@ func (c *Client) execute(command *Command.Command, isSequence bool, execute bool
 }
 
 /* Executes a specified sequence of commands */
-func (c *Client) sequence(commands []*Command.Command) (ok bool, last *Command.Command) {
+func (r *Requester) sequence(commands []*Command.Command) (ok bool, last *Command.Command) {
 	var leftRetries int = CommandRetries
 	var retry bool = false
 
 	for leftRetries > 0 {
 		for _, command := range commands {
-			last = command
-			c.execute(command, true, true, leftRetries)
+			last = r.Request(command)
 
 			/* Take into consideration sequence retries */
 			if command.LastError() == ERR_RestartSequence {
