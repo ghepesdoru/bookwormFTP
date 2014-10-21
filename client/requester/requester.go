@@ -1,68 +1,69 @@
 package requester
 
-import(
+import (
 	"fmt"
-	"strconv"
-	"time"
-	"net/url"
-	Net "net"
-	Path "path"
-	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
+	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
+	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
 	Commands "github.com/ghepesdoru/bookwormFTP/core/commands"
 	Credentials "github.com/ghepesdoru/bookwormFTP/core/credentials"
 	Parser "github.com/ghepesdoru/bookwormFTP/core/parser"
 	Reader "github.com/ghepesdoru/bookwormFTP/core/reader"
 	Response "github.com/ghepesdoru/bookwormFTP/core/response"
-	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
+	Net "net"
+	"net/url"
+	Path "path"
+	"strconv"
+	"time"
 )
 
 const (
 	/* Generic constants */
 	DefaultRequesterProtocol = "tcp"
-	DefaultHostPort = 21
-	DefaultUserName = "anonymous"
-	DefaultPassword	= ""
-	DefaultDataPort = -1
-	DefaultWorkingDir = "/"
-	EmptyString		= ""
-	CommandRetries 	= 3
+	DefaultHostPort          = 21
+	DefaultUserName          = "anonymous"
+	DefaultPassword          = ""
+	DefaultDataPort          = -1
+	DefaultWorkingDir        = "/"
+	EmptyString              = ""
+	CommandRetries           = 3
 )
 
 /* Error definitions */
 var (
-	ERR_InvalidHostUrl 			= fmt.Errorf("Invalid host URL.")
-	ERR_UnableToLookupHost 		= fmt.Errorf("Unable to lookup host address. The host might not support the specified IP version, or is currently unavailable.")
+	ERR_InvalidHostUrl          = fmt.Errorf("Invalid host URL.")
+	ERR_UnableToLookupHost      = fmt.Errorf("Unable to lookup host address. The host might not support the specified IP version, or is currently unavailable.")
 	ERR_CanNotEstablishDataConn = fmt.Errorf("Unable to establish a data connection in the current context. Please consider establishing a passive mode or extended passive mode request.")
-	ERR_InvalidDataAddress 		= fmt.Errorf("Invalid data address.")
-	ERR_ResponseParsingError 	= fmt.Errorf("An error triggered while parsing the server response.")
-	ERR_UnconsumedResponses	 	= fmt.Errorf("Acumulation of unconsummed responses from the server.")
-	ERR_ServerNotReady		 	= fmt.Errorf("Server is disconnected or otherwise unavailable.")
-	ERR_NoServerResponse	 	= fmt.Errorf("Unable to fetch a response from server at this time.")
-	ERR_RestartSequence		 	= fmt.Errorf("Restart sequence.")
-	ERR_InvalidDataAddr			= fmt.Errorf("Invalid data connection Addr.")
+	ERR_InvalidDataAddress      = fmt.Errorf("Invalid data address.")
+	ERR_ResponseParsingError    = fmt.Errorf("An error triggered while parsing the server response.")
+	ERR_UnconsumedResponses     = fmt.Errorf("Acumulation of unconsummed responses from the server.")
+	ERR_ServerNotReady          = fmt.Errorf("Server is disconnected or otherwise unavailable.")
+	ERR_NoServerResponse        = fmt.Errorf("Unable to fetch a response from server at this time.")
+	ERR_RestartSequence         = fmt.Errorf("Restart sequence.")
+	ERR_InvalidDataAddr         = fmt.Errorf("Invalid data connection Addr.")
 
 	/* Error formats */
-	ERRF_InvalidCommandName = "Command error: Unrecognized command %s."
-	ERRF_InvalidCompletionStatus = "Command error: %s completed without meeting any of the %s status. Completion status: %d, completion message %s"
+	ERRF_InvalidCommandName          = "Command error: Unrecognized command %s."
+	ERRF_InvalidCompletionStatus     = "Command error: %s completed without meeting any of the %s status. Completion status: %d, completion message %s"
 	ERRF_InvalidCommandOutOfSequence = "Command error: %s could not complete. Use a sequence for fequential commands. Intermediary status: %d, message: %s"
-	ERRF_CommandMaxRetries = "Command error: %s reached the maximum number of retries. Transient Negative Completion reply status %d, message: %s"
-	ERRF_CommandFailure = "Command failure: %d %s"
-	ERRF_MissingPortInHost = "missing port in address"
+	ERRF_CommandMaxRetries           = "Command error: %s reached the maximum number of retries. Transient Negative Completion reply status %d, message: %s"
+	ERRF_CommandFailure              = "Command failure: %d %s"
+	ERRF_MissingPortInHost           = "missing port in address"
 )
 
 /* BookwormFTP Requester type definition */
 type Requester struct {
-	controlConnection	Net.Conn
-	controlReader		*Reader.Reader
-	dataReader			*Reader.Reader
-	hostAddress			*Address.Addr
-	dataAddress			*Address.Addr
-	credentials			*Credentials.Credentials
-	initDir				string
-	initFile			string
-	connected			bool
-	ready				bool
+	controlConnection Net.Conn
+	controlReader     *Reader.Reader
+	dataConnection    Net.Conn
+	dataReader        *Reader.Reader
+	hostAddress       *Address.Addr
+	dataAddress       *Address.Addr
+	credentials       *Credentials.Credentials
+	initDir           string
+	initFile          string
+	connected         bool
+	ready             bool
 }
 
 /* Generates a new Requester using any of the supported ip versions. (IPv4 first) */
@@ -85,7 +86,7 @@ func NewRequesterIPv6(hostURL string) (*Requester, error) {
 	return preprocessRequesterBuild(hostURL, Address.IPv6)
 }
 
-func (r *Requester) GetHostAddr() (*Address.Addr) {
+func (r *Requester) GetHostAddr() *Address.Addr {
 	return Address.FromConnection(r.controlConnection)
 }
 
@@ -122,7 +123,7 @@ func (r *Requester) RegisterDataAddr(addr *Address.Addr) (bool, error) {
 }
 
 /* Make a request to the server */
-func (r *Requester) Request(command *Command.Command) (*Command.Command) {
+func (r *Requester) Request(command *Command.Command) *Command.Command {
 	r.execute(command, false, true, CommandRetries)
 	return command
 }
@@ -203,7 +204,7 @@ func getHostParsedUrl(hostURL string) (host string, port int, path string, crede
 }
 
 /* Extracts the host Address.Addr from the received hostURL, taking IP version selection into account. */
-func getHostAddr(host string, port int, ipFamily int) (*Address.Addr, error)  {
+func getHostAddr(host string, port int, ipFamily int) (*Address.Addr, error) {
 	var ip Net.IP = nil
 
 	ips, err := Net.LookupIP(host)
@@ -250,7 +251,7 @@ func buildRequester(hostAddr *Address.Addr, credentials *Credentials.Credentials
 	}
 
 	/* Instantiate the new Requester */
-	requester = &Requester{conn, Reader.NewReader(conn), nil, hostAddr, nil, credentials, dir, file, true, false}
+	requester = &Requester{conn, Reader.NewReader(conn), nil, nil, hostAddr, nil, credentials, dir, file, true, false}
 
 	/* Grab server greeting, and check for server ready status */
 	welcomeMessage, _ := requester.getResponse()
@@ -395,9 +396,21 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 	} else {
 		t := time.Now()
 		/* Block until the server responds */
-		for len(r.controlReader.Peek()) == 0 {
-			time.Sleep(100 * time.Millisecond)
-			fmt.Println("Waiting for server response since: ", time.Since(t))
+		for {
+			if !r.dataReader.IsActive() {
+				r.dataConnection.Close()
+				break
+			}
+
+			v := r.controlReader.Peek()
+
+			if len(v) > 0 {
+				fmt.Println("First input found", string(v))
+				break
+			} else {
+				time.Sleep(100 * time.Millisecond)
+				fmt.Println("Waiting for server response since: ", time.Since(t))
+			}
 		}
 
 		/* Get the server response */
@@ -442,12 +455,12 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 			command.AddError(fmt.Errorf(ERRF_CommandMaxRetries, command.Name(), status, command.Response().Message()))
 		} else {
 			/* Transient Negative Completion reply - repeat the command(s) */
-			if (isSequence) {
+			if isSequence {
 				/* Reset the sequence, this is a temporary error */
 				command.AddError(ERR_RestartSequence)
 			} else {
 				/* Try again to execute this command */
-				r.execute(command, isSequence, true, leftRetries - 1)
+				r.execute(command, isSequence, true, leftRetries-1)
 				return
 			}
 		}

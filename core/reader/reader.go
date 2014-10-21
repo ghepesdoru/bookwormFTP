@@ -2,8 +2,8 @@ package reader
 
 import (
 	"fmt"
-	"time"
 	"io"
+	"time"
 )
 
 const (
@@ -19,34 +19,34 @@ const (
 )
 
 const (
-	MAX_RESPONSE_SIZE = 1024
+	MAX_RESPONSE_SIZE         = 24
 	READING_ACCEPTED_FAILURES = 4
 )
 
 /* Read delay constant */
 var (
-	DELAY_READ time.Duration = 100 * time.Millisecond
-	DELAY_WAIT_FOR_READ time.Duration = 100 * time.Millisecond
-	ERROR_ConnectionClosed = fmt.Errorf("use of closed network connection")
-	ERROR_EOF	= io.EOF
-	STATUS = map[int]string {
+	DELAY_READ             time.Duration = 100 * time.Millisecond
+	DELAY_WAIT_FOR_READ    time.Duration = 100 * time.Millisecond
+	ERROR_ConnectionClosed               = fmt.Errorf("use of closed network connection")
+	ERROR_EOF                            = io.EOF
+	STATUS                               = map[int]string{
 		SIG_WaitingForData: "Waiting for data",
-		SIG_DataRead: "Data read",
-		SIG_Done: "Action completed successfully",
+		SIG_DataRead:       "Data read",
+		SIG_Done:           "Action completed successfully",
 	}
 )
 
 /* Bookworm FTP reader control connection */
 type Reader struct {
-	connection 			io.Reader
-	controlChannel 		chan int
-	errorChannel		chan error
-	dataChannel			chan []byte
-	rawData				[]byte
-	lastError			*error
-	connAvailable		bool
-	active				bool
-	status				int
+	connection     io.Reader
+	controlChannel chan int
+	errorChannel   chan error
+	dataChannel    chan []byte
+	rawData        []byte
+	lastError      *error
+	connAvailable  bool
+	active         bool
+	status         int
 }
 
 /* Instantiate a new Reader and initialize the channel selection */
@@ -61,7 +61,7 @@ func NewReader(conn io.Reader) (reader *Reader) {
 
 	/* Put the reader into reading status */
 	reader.controlChannel <- SIG_StartReading
-	<- reader.controlChannel
+	<-reader.controlChannel
 
 	return
 }
@@ -73,7 +73,7 @@ func (r *Reader) Get() []byte {
 
 /* Data get blocking for a longer time */
 func (r *Reader) GetBlock() []byte {
-	return r.getRaw(0, READING_ACCEPTED_FAILURES * READING_ACCEPTED_FAILURES, true)
+	return r.getRaw(0, READING_ACCEPTED_FAILURES*READING_ACCEPTED_FAILURES, true)
 }
 
 /* Last encountered error getter */
@@ -105,7 +105,7 @@ func (r *Reader) Peek() []byte {
 func (r *Reader) Read() []byte {
 	/* Reset content buffer */
 	r.controlChannel <- SIG_Reset
-	<- r.controlChannel
+	<-r.controlChannel
 	return r.GetBlock()
 }
 
@@ -134,18 +134,18 @@ func (r *Reader) getRaw(n int, READING_ACCEPTED_FAILURES int, flush bool) []byte
 		if r.status == SIG_WaitingForData {
 			/* If the reader is waiting for data, offer it a delay of DELAY_WAIT_FOR_READ before restart */
 			time.Sleep(DELAY_WAIT_FOR_READ)
-			return r.getRaw(n + 1, READING_ACCEPTED_FAILURES, flush)
+			return r.getRaw(n+1, READING_ACCEPTED_FAILURES, flush)
 		} else {
 			/* If the reader has read some data, offer it a few more milliseconds, maybe the response
 			spawns on multiple lines */
 			time.Sleep(DELAY_READ)
-			return r.getRaw(n + 1, READING_ACCEPTED_FAILURES, flush)
+			return r.getRaw(n+1, READING_ACCEPTED_FAILURES, flush)
 		}
 	} else {
 		data := append(r.rawData, []byte{}...)
 		if flush {
 			r.controlChannel <- SIG_Reset
-			<- r.controlChannel
+			<-r.controlChannel
 		}
 		return data
 	}
@@ -160,7 +160,7 @@ func (r *Reader) listen() {
 	for {
 		select {
 		/* Signal received */
-		case sig := <- r.controlChannel:
+		case sig := <-r.controlChannel:
 			switch sig {
 			case SIG_StartReading:
 				/* Start a go routine that will infinitely read raw data from the server, up to the connection closing */
@@ -168,13 +168,13 @@ func (r *Reader) listen() {
 					r.active = true
 
 					go func() {
-//						fmt.Println("Connection opened")
+						//						fmt.Println("Connection opened")
 						for r.connAvailable && r.active {
 							data = make([]byte, MAX_RESPONSE_SIZE)
 
 							/* The reader will wait forever for data at this point, notify */
 							r.controlChannel <- SIG_WaitingForData
-							<- r.controlChannel
+							<-r.controlChannel
 
 							/* Read incoming data */
 							n, err = r.connection.Read(data)
@@ -182,18 +182,18 @@ func (r *Reader) listen() {
 							if err != nil {
 								/* Break the loop on error */
 								r.errorChannel <- err
-								<- r.errorChannel
+								<-r.errorChannel
+								break
 							} else if n > 0 {
 								/* Forward data throw data channel */
 								r.dataChannel <- data[:n]
 
 								/* The reader read some data or encountered an error, notify */
 								r.controlChannel <- SIG_DataRead
-								<- r.controlChannel
+								<-r.controlChannel
 							}
 						}
-//						fmt.Println("Connection closed or otherwise unavailable")
-					}();
+					}()
 				}
 
 				/* Notify the end of the current action */
@@ -219,15 +219,15 @@ func (r *Reader) listen() {
 				r.controlChannel <- SIG_Done
 
 			default:
-		}
+			}
 
 		/* Data read */
-		case data := <- r.dataChannel:
+		case data := <-r.dataChannel:
 			/* Append the newly read data to the raw data keeper */
 			r.rawData = append(r.rawData, data...)
 
 		/* Data channel encountered an error. Stop reading, and remember the error! */
-		case err := <- r.errorChannel:
+		case err := <-r.errorChannel:
 			r.lastError = &err
 
 			if err == ERROR_EOF {

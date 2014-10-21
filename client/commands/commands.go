@@ -1,80 +1,80 @@
 package commands
 
-import(
+import (
 	"fmt"
-	"time"
-	"strings"
-	"strconv"
-	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
-	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
 	Requester "github.com/ghepesdoru/bookwormFTP/client/requester"
+	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
+	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const (
-	EmptyString			= ""
+	EmptyString = ""
 
 	/* Types */
-	TYPE_Ascii			= "A"
-	TYPE_Ebcdic			= "E"
-	TYPE_Image			= "I"
-	TYPE_LocalByte		= "L"
+	TYPE_Ascii     = "A"
+	TYPE_Ebcdic    = "E"
+	TYPE_Image     = "I"
+	TYPE_LocalByte = "L"
 
 	/* Format controls */
-	FMTCTRL_NonPrint	= "N"
-	FMTCTRL_Telnet		= "T"
-	FMTCTRL_Carriage	= "C"
+	FMTCTRL_NonPrint = "N"
+	FMTCTRL_Telnet   = "T"
+	FMTCTRL_Carriage = "C"
 
 	/* Transfer modes */
-	TRANSFER_Stream		= "S"
-	TRANSFER_Block		= "B"
-	TRANSFER_Compressed	= "C"
-	TRANSFER_Unspecified= "U"
+	TRANSFER_Stream      = "S"
+	TRANSFER_Block       = "B"
+	TRANSFER_Compressed  = "C"
+	TRANSFER_Unspecified = "U"
 
-	FILESTRUCT_File		= "F"
-	FILESTRUCT_Record	= "R"
-	FILESTRUCT_Page		= "P"
+	FILESTRUCT_File   = "F"
+	FILESTRUCT_Record = "R"
+	FILESTRUCT_Page   = "P"
 )
 
 /* Default errors definition */
 var (
-	ERR_NotConnected 	= fmt.Errorf("Invalid requester. The specified requester has no active connection to server.")
-	ERR_NotReady 		= fmt.Errorf("Invalid requester. The specified requester did not received a Ready message from the server.")
-	ERR_NoRequester 	= fmt.Errorf("Unable to execute specified action due to unnavailability of a valid Requester.")
-	ERR_NoFeatures		= fmt.Errorf("Server supported features unavailable.")
-	ERR_InvalidTimeVal	= fmt.Errorf("Invalid time-val representation.")
-	ERR_InvalidMode	 	= fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
-	ERR_NoPWDResult		= fmt.Errorf("Could not determine the current working directory.")
-	ERR_InvalidStruct 	= fmt.Errorf("Invalid file structure type. Please consider using one of the default types: F, R, P.")
+	ERR_NotConnected   = fmt.Errorf("Invalid requester. The specified requester has no active connection to server.")
+	ERR_NotReady       = fmt.Errorf("Invalid requester. The specified requester did not received a Ready message from the server.")
+	ERR_NoRequester    = fmt.Errorf("Unable to execute specified action due to unnavailability of a valid Requester.")
+	ERR_NoFeatures     = fmt.Errorf("Server supported features unavailable.")
+	ERR_InvalidTimeVal = fmt.Errorf("Invalid time-val representation.")
+	ERR_InvalidMode    = fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
+	ERR_NoPWDResult    = fmt.Errorf("Could not determine the current working directory.")
+	ERR_InvalidStruct  = fmt.Errorf("Invalid file structure type. Please consider using one of the default types: F, R, P.")
 )
 
 var (
 	/* Translation map from int to time.Month */
-	IntToMonth 			= map[int]time.Month {
-		1: 	time.January,
-		2: 	time.February,
-		3: 	time.March,
-		4: 	time.April,
-		5: 	time.May,
-		6: 	time.June,
-		7: 	time.July,
-		8: 	time.August,
-		9: 	time.September,
-		10:	time.October,
-		11:	time.November,
-		12:	time.December,
+	IntToMonth = map[int]time.Month{
+		1:  time.January,
+		2:  time.February,
+		3:  time.March,
+		4:  time.April,
+		5:  time.May,
+		6:  time.June,
+		7:  time.July,
+		8:  time.August,
+		9:  time.September,
+		10: time.October,
+		11: time.November,
+		12: time.December,
 	}
 
 	/* Definition of valid representation types */
-	RepresentationTypes = map[string]map[string]bool {
+	RepresentationTypes = map[string]map[string]bool{
 		/* ASCII type */
-		"A": map[string]bool {
-			"N": true,	/* Non-Print */
-			"T": true,	/* Telnet format effectors */
-			"C": true,	/* Carriage Control (ASA) */
+		"A": map[string]bool{
+			"N": true, /* Non-Print */
+			"T": true, /* Telnet format effectors */
+			"C": true, /* Carriage Control (ASA) */
 		},
 		/* EBCDIC type */
-		"E": map[string]bool {
+		"E": map[string]bool{
 			"N": true,
 			"T": true,
 			"C": true,
@@ -88,7 +88,7 @@ var (
 
 /* Define the Client Commands type */
 type Commands struct {
-	requester *Requester.Requester
+	requester            *Requester.Requester
 	hasAttachedRequester bool
 }
 
@@ -119,7 +119,7 @@ func NewCommand(command string, parameters string, expectedStatus ...int) *Comma
 }
 
 /* Attaches the specified Requester instance to the current Commands. */
-func (c *Commands) AttachRequester (requester *Requester.Requester) (ok bool, err error) {
+func (c *Commands) AttachRequester(requester *Requester.Requester) (ok bool, err error) {
 	if !requester.IsConnected() {
 		err = ERR_NotConnected
 	} else if !requester.IsReady() {
@@ -182,7 +182,7 @@ func (c *Commands) simpleDataCommand(name string, param string, expected ...int)
 	return data, command.LastError()
 }
 
-func asUpperNormalized(s string) {
+func asUpperNormalized(s string) string {
 	return strings.TrimSpace(strings.ToUpper(s))
 }
 
@@ -204,19 +204,19 @@ func (c *Commands) parseTimeVal(timeVal string) (t *time.Time, err error) {
 
 			if i < 4 {
 				/* Year part */
-				year = year * 10 + d
+				year = year*10 + d
 			} else if i < 6 {
-				month = month * 10 + d
-			} else if  i < 8 {
-				day = day * 10 + d
+				month = month*10 + d
+			} else if i < 8 {
+				day = day*10 + d
 			} else if i < 10 {
-				hour = hour * 10 + d
+				hour = hour*10 + d
 			} else if i < 12 {
-				min = min * 10 + d
+				min = min*10 + d
 			} else if i < 14 {
-				sec = sec * 10 + d
+				sec = sec*10 + d
 			} else if inMilliseconds {
-				nsec = nsec * 10 + d
+				nsec = nsec*10 + d
 			}
 		} else {
 			/* Milliseconds start here */
@@ -320,7 +320,7 @@ func (c *Commands) FEAT() (features map[string]string, err error) {
 		}
 
 		length := len(parts) - 1
-		for i, line := range(parts) {
+		for i, line := range parts {
 			line = strings.TrimSpace(line)
 
 			if i == 0 || i == length {
@@ -410,11 +410,11 @@ func (c *Commands) NLST(path string) ([]byte, error) {
 }
 
 func (c *Commands) NOOP() (bool, error) {
-	return c.simpleControlCommand("noop", path, Status.PositiveCompletion)
+	return c.simpleControlCommand("noop", EmptyString, Status.PositiveCompletion)
 }
 
 func (c *Commands) OPTS(command string, option string) (bool, error) {
-	return c.simpleControlCommand("opts", command + " " + option, Status.PositiveCompletion)
+	return c.simpleControlCommand("opts", command+" "+option, Status.PositiveCompletion)
 }
 
 func (c *Commands) PASS(password string) (bool, error) {
@@ -422,7 +422,7 @@ func (c *Commands) PASS(password string) (bool, error) {
 }
 
 func (c *Commands) PASV() (ok bool, err error) {
-	ok, err, response := c.controlCommand("pasv", EmptyString, Status.PassiveMode);
+	ok, err, response := c.controlCommand("pasv", EmptyString, Status.PassiveMode)
 	if ok {
 		ok, err = c.requester.RegisterDataAddr(Address.FromPortSpecifier(response))
 	}
@@ -440,7 +440,7 @@ func (c *Commands) PBSZ_PLUS() (bool, error) {
 
 func (c *Commands) PORT(port uint) (bool, error) {
 	addr := c.requester.GetHostAddr()
-	addr.Port = port
+	addr.Port = int(port)
 	return c.simpleControlCommand("port", addr.ToPortSpecifier(), Status.PositiveCompletion)
 }
 
@@ -470,9 +470,9 @@ func (c *Commands) PWD() (dir string, err error) {
 	}
 
 	if start > -1 && end > -1 {
-		dir = dir[start + 1:end]
+		dir = dir[start+1 : end]
 	} else {
-		dir = CONST_EmptyString
+		dir = EmptyString
 	}
 
 	return
@@ -496,7 +496,7 @@ func (c *Commands) REST_PLUS(marker string) (bool, error) {
 }
 
 func (c *Commands) RETR(path string) (bool, error) {
-
+	return false, nil
 }
 
 func (c *Commands) RMD(path string) (bool, error) {
@@ -517,7 +517,7 @@ func (c *Commands) SITE(params string) (bool, error) {
 
 func (c *Commands) SIZE(fileName string) (int, error) {
 	_, err, response := c.controlCommand("size", fileName, Status.FileStatus)
-	return Status.ToInt(response), err
+	return Status.ToInt([]byte(response)), err
 }
 
 func (c *Commands) SMNT(path string) (bool, error) {
@@ -529,11 +529,11 @@ func (c *Commands) STAT(resource string) (string, error) {
 	return string(response), err
 }
 
-func (c *Commands) STOR() () {
+func (c *Commands) STOR() {
 
 }
 
-func (c *Commands) STOU() () {
+func (c *Commands) STOU() {
 
 }
 
@@ -543,7 +543,7 @@ func (c *Commands) STRU(structure string) (bool, error) {
 		return false, ERR_InvalidStruct
 	}
 
-	c.simpleControlCommand("stru", structure, Status.PositiveCompletion)
+	return c.simpleControlCommand("stru", structure, Status.PositiveCompletion)
 }
 
 func (c *Commands) SYST() (string, error) {
@@ -558,4 +558,3 @@ func (c *Commands) TYPE(reprType string) (bool, error) {
 func (c *Commands) USER(username string) (bool, error) {
 	return c.simpleControlCommand("user", username, Status.UserNameOk)
 }
-
