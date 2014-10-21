@@ -367,7 +367,7 @@ func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Comma
 }
 
 /* Executes a command (wrapper around request, takes care of response reading, error handling, and is status aware) */
-func (r *Requester) execute(command *Command.Command, isSequence bool, execute bool, leftRetries int) {
+func (r *Requester) execute(command *Command.Command, isSequence bool, execute bool, leftRetries int) (*Command.Command) {
 	var err error
 
 	if command.Name() == Commands.UnknownCommand {
@@ -377,7 +377,7 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 	if !r.IsReady() {
 		/* Do not make requests on closed connections */
 		command.AddError(ERR_ServerNotReady)
-		return
+		return command
 	}
 
 	/* Execute the command */
@@ -388,28 +388,26 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 		/* Error communicating to server */
 		if err != nil {
 			command.AddError(err)
-			return
+			return command
 		} else {
 			/* Get the server response */
 			command.AttachResponse(r.getResponse())
 		}
 	} else {
-		t := time.Now()
-		/* Block until the server responds */
+		/* Block until the server responds or the data connection closes */
 		for {
 			if !r.dataReader.IsActive() {
-				r.dataConnection.Close()
+				/* Break the waiting if the data reader is closed. */
 				break
 			}
 
+			/* Keep searching for content up to the pipe dead timeout. */
 			v := r.controlReader.Peek()
 
 			if len(v) > 0 {
-				fmt.Println("First input found", string(v))
 				break
 			} else {
 				time.Sleep(100 * time.Millisecond)
-				fmt.Println("Waiting for server response since: ", time.Since(t))
 			}
 		}
 
@@ -424,7 +422,7 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 		/* Attach an empty response to the command to ensure interface chaining capabilities. */
 		command.AttachResponse(&Response.Response{}, nil)
 
-		return
+		return command
 	}
 
 	/* Check response status to determine the execution completion */
@@ -436,8 +434,7 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 
 	if first == 1 {
 		/* Positive Preliminary reply - wait for a new response */
-		r.execute(command, isSequence, execute, leftRetries)
-		return
+		return r.execute(command, isSequence, execute, leftRetries)
 	} else if first == 2 {
 		/* Positive Completion reply - action completed successfully, no matter of the expected status */
 		if !command.IsExpectedStatus(status) {
@@ -460,14 +457,15 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 				command.AddError(ERR_RestartSequence)
 			} else {
 				/* Try again to execute this command */
-				r.execute(command, isSequence, true, leftRetries-1)
-				return
+				return r.execute(command, isSequence, true, leftRetries-1)
 			}
 		}
 	} else if first == 5 {
 		/* Permanent Negative Completion reply - failure. Forward the server error message */
 		command.AddError(fmt.Errorf(ERRF_CommandFailure, status, command.Response().Message()))
 	}
+
+	return command
 }
 
 /* Executes a specified sequence of commands */
