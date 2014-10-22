@@ -8,7 +8,7 @@ import (
 	Commands "github.com/ghepesdoru/bookwormFTP/core/commands"
 	Credentials "github.com/ghepesdoru/bookwormFTP/core/credentials"
 	Logger	"github.com/ghepesdoru/bookwormFTP/core/logger"
-	Parser "github.com/ghepesdoru/bookwormFTP/core/parser"
+	Parser "github.com/ghepesdoru/bookwormFTP/core/parsers/parser"
 	Reader "github.com/ghepesdoru/bookwormFTP/core/reader"
 	Response "github.com/ghepesdoru/bookwormFTP/core/response"
 	Net "net"
@@ -20,14 +20,15 @@ import (
 
 const (
 	/* Generic constants */
-	DefaultRequesterProtocol = "tcp"
-	DefaultHostPort          = 21
-	DefaultUserName          = "anonymous"
-	DefaultPassword          = ""
-	DefaultDataPort          = -1
-	DefaultWorkingDir        = "/"
-	EmptyString              = ""
-	CommandRetries           = 3
+	DefaultRequesterProtocol	= "tcp"
+	DefaultHostPort          	= 21
+	DefaultUserName				= "anonymous"
+	DefaultPassword				= ""
+	DefaultDataPort				= -1
+	DefaultWorkingDir			= "/"
+	DefaultScheme				= "ftp://"
+	EmptyString              	= ""
+	CommandRetries           	= 3
 )
 
 /* Error definitions */
@@ -177,6 +178,11 @@ func getHostParsedUrl(hostURL string) (host string, port int, path string, crede
 
 	/* Extract url parts */
 	URLData, err = url.Parse(hostURL)
+
+	/* Check for scheme and host validity */
+	if URLData.Scheme == EmptyString {
+		return getHostParsedUrl(DefaultScheme + hostURL)
+	}
 
 	if err != nil {
 		err = ERR_InvalidHostUrl
@@ -440,7 +446,7 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 			if len(v) > 0 {
 				break
 			} else {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(500 * time.Millisecond)
 			}
 		}
 

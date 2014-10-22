@@ -2,8 +2,9 @@ package commands
 
 import (
 	"fmt"
-	Command "github.com/ghepesdoru/bookwormFTP/client/command"
 	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
+	Command "github.com/ghepesdoru/bookwormFTP/client/command"
+	FeaturesParser "github.com/ghepesdoru/bookwormFTP/core/parsers/features"
 	Requester "github.com/ghepesdoru/bookwormFTP/client/requester"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
 	"strconv"
@@ -46,6 +47,7 @@ var (
 	ERR_InvalidMode    = fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
 	ERR_NoPWDResult    = fmt.Errorf("Could not determine the current working directory.")
 	ERR_InvalidStruct  = fmt.Errorf("Invalid file structure type. Please consider using one of the default types: F, R, P.")
+	ERR_InvalidFileName= fmt.Errorf("Invalid file name.")
 )
 
 var (
@@ -316,44 +318,13 @@ func (c *Commands) EPSV() (ok bool, err error) {
 	return
 }
 
-func (c *Commands) FEAT() (features map[string]string, err error) {
+func (c *Commands) FEAT() (features *FeaturesParser.Features, err error) {
 	var response string
-	var parts []string
-
 	_, err, response = c.controlCommand("feat", EmptyString, Status.SystemStatus)
-	if err == nil {
-		features = make(map[string]string)
 
-		if parts = strings.Split(response, "\r\n"); len(parts) == 0 {
-			parts = strings.Split(response, "\n")
-		}
+	features = FeaturesParser.FromFeaturesList(response)
 
-		length := len(parts) - 1
-		for i, line := range parts {
-			line = strings.TrimSpace(line)
-
-			if i == 0 || i == length {
-				/* First line, can be "Features: ", last line can be "END" */
-				if l := strings.ToLower(line); l == "features:" || l == "end" {
-					/* Skip the two lines in feature extraction */
-					continue
-				}
-			}
-
-			aux := strings.Split(line, " ")
-			l := len(aux)
-
-			if l > 0 {
-				if l > 1 {
-					features[strings.ToUpper(aux[0])] = strings.Join(aux[1:], " ")
-				} else {
-					features[strings.ToUpper(aux[0])] = EmptyString
-				}
-			}
-		}
-	}
-
-	if len(features) == 0 {
+	if !features.HasFeatures() {
 		err = ERR_NoFeatures
 	}
 
@@ -401,6 +372,10 @@ func (c *Commands) MLSD(dir string) ([]byte, error) {
 }
 
 func (c *Commands) MLST(file string) ([]byte, error) {
+	if len(file) == 0 {
+		return []byte{}, ERR_InvalidFileName
+	}
+
 	return c.simpleDataCommand("mlst", file, Status.FileActionOk)
 }
 

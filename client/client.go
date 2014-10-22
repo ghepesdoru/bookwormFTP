@@ -1,9 +1,11 @@
 package client
 
 import(
+	"fmt"
 	Address 		"github.com/ghepesdoru/bookwormFTP/core/addr"
 	ClientCommands 	"github.com/ghepesdoru/bookwormFTP/client/commands"
 	Credentials 	"github.com/ghepesdoru/bookwormFTP/core/credentials"
+	FeaturesParser 	"github.com/ghepesdoru/bookwormFTP/core/parsers/features"
 	Logger			"github.com/ghepesdoru/bookwormFTP/core/logger"
 	Path			"path"
 	Requester 		"github.com/ghepesdoru/bookwormFTP/client/requester"
@@ -13,21 +15,18 @@ import(
 
 /* Constants definition */
 const (
-	EmptyString              = ""
+	EmptyString			= ""
+	RootDir				= "/"
 
 	/* Connection option names */
 	OPT_DebugMode	 	= "debug"
-	OPT_Connected 		= "connected"
-	OPT_ServerReady 	= "ready"
-	OPT_InitialPath 	= "initial_path"
 	OPT_Disconnected 	= "disconnected"
-	OPT_Authenticated 	= "logged_in"
-	OPT_DataPort		= "client_data_port"
+	OPT_LoggedIn		= "logged_in"
 	OPT_PassiveMode		= "passive"
 	OPT_ExtendedPassive = "extended_passive"
 	OPT_CurrentDir		= "cwd"
 	OPT_Account			= "account"
-	OPT_AccountEnabled = "account_active"
+	OPT_AccountEnabled 	= "account_active"
 	OPT_TransferMode	= "transfer_mode"
 	OPT_DataType		= "data_type"
 	OPT_FormatControl	= "format_control"
@@ -41,11 +40,13 @@ type Client struct {
 	Commands	*ClientCommands.Commands
 	requester	*Requester.Requester
 	credentials *Credentials.Credentials
+	currentDir	string
 	settings 	*Settings.Settings
 }
 
 /* Instantiates a new client (IPv4 preferred), and takes all possible actions based on address url */
 func NewClient(address string) (client *Client, err error) {
+	var dir string
 	client, err = newClient(address, Address.IPvAny)
 
 	if err != nil {
@@ -59,8 +60,20 @@ func NewClient(address string) (client *Client, err error) {
 		return
 	}
 
+	/* Get system type */
+	fmt.Println(client.System())
+
+	/* Get supported features */
+	fmt.Println(client.Features())
+
+	/* Get the current directory */
+	dir, err = client.Commands.PWD()
+	if err == nil {
+		client.currentDir = dir
+	}
+
 	/* Check for initial path, and navigate there if available */
-	dir, _ := client.requester.GetInitialPath()
+	dir, _ = client.requester.GetInitialPath()
 
 	if dir != EmptyString {
 		_, err = client.ChangeDir(dir)
@@ -127,8 +140,18 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 
 	if nil == err {
 		credentials = requester.GetCredentials()
-		client = &Client{commands, requester, credentials, Settings.NewSettings(
+		client = &Client{commands, requester, credentials, RootDir, Settings.NewSettings(
 			Settings.NewOption(OPT_DebugMode, true),
+			Settings.NewOption(OPT_LoggedIn, false),
+			Settings.NewOption(OPT_PassiveMode, false),
+			Settings.NewOption(OPT_ExtendedPassive, false),
+			Settings.NewOption(OPT_Account, EmptyString),
+			Settings.NewOption(OPT_AccountEnabled, false),
+			Settings.NewOption(OPT_TransferMode, ClientCommands.TRANSFER_Unspecified),
+			Settings.NewOption(OPT_DataType, ClientCommands.TYPE_Ascii),
+			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_NonPrint),
+			Settings.NewOption(OPT_ByteSize, 8),
+			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_File),
 		)}
 
 		/* Enable debugging */
@@ -143,6 +166,11 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 /* Extracts the current path parts (directories and file) from the specified input */
 func (c *Client) extractPathElements(p string) (dir string, file string) {
 	p = Path.Clean(p)
+
+	if Path.Ext(p) == EmptyString {
+		p = p + "/"
+	}
+
 	return Path.Split(p)
 }
 
@@ -150,8 +178,9 @@ func (c *Client) extractPathElements(p string) (dir string, file string) {
 func (c *Client) toAbsolutePath (d string) string {
 	if !Path.IsAbs(d) {
 		/* Not an absolute path, concatenate the relative path to the working directory, and normalize them together  */
-		d = c.settings.Get(OPT_CurrentDir).ToString() + "/" + d
-		d, _ = c.extractPathElements(d)
+		d = c.currentDir + RootDir + d
+		d, f := c.extractPathElements(d)
+		d = Path.Join(d, f)
 	}
 
 	return d
@@ -163,7 +192,32 @@ func (c *Client) ChangeDir(path string) (bool, error) {
 	dir = c.toAbsolutePath(path)
 	ok, err := c.Commands.CWD(dir)
 
+	if ok {
+		/* Keep track of the current working directory */
+		c.currentDir = dir
+	}
+
 	return ok, err
+}
+
+/* Changes the current working directory to it's container on the host */
+func (c *Client) ChangeToParentDir() (bool, error) {
+	if c.currentDir == RootDir {
+		return true, nil
+	}
+
+	ok, err := c.Commands.CDUP()
+	if ok {
+		/* Keep track of the current working directory */
+		c.currentDir = Path.Dir(Path.Clean(c.currentDir))
+	}
+
+	return ok, err
+}
+
+/* Get the current working directory on host */
+func (c *Client) CurrentDir() string {
+	return c.currentDir
 }
 
 /* Download the specified file */
@@ -171,9 +225,50 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 	return
 }
 
+/* Extracts the server supported features map */
+func (c *Client) Features() (*FeaturesParser.Features, error) {
+	return c.Commands.FEAT()
+}
+
+/* Checks if the client is in any of the supported passive modes */
+func (c *Client) InPassiveMode() bool {
+	return c.settings.Get(OPT_PassiveMode).Is(true) || c.settings.Get(OPT_ExtendedPassive).Is(true)
+}
+
 /* Checks if the current client established a connection using IP version 4 */
 func (c *Client) IsIPv4() bool {
 	return c.requester.GetHostAddr().IPFamily == Address.IPv4
+}
+
+/* Lists the contents of the current directory */
+func (c *Client) ListCurrentDir() (string, error) {
+	return c.List(EmptyString)
+}
+
+/* Lists the contents of the specified directory */
+func (c *Client) List(dir string) (list string, err error) {
+	var rawList []byte
+
+	if len(dir) == 0 {
+		/* Fallback on current directory */
+		dir = c.currentDir
+	} else {
+		dir = c.toAbsolutePath(dir)
+	}
+
+	if !c.InPassiveMode() {
+		_, err = c.PassiveMode()
+	}
+
+	if err == nil {
+		rawList, err = c.Commands.LIST(dir)
+
+		if err == nil {
+			list = string(rawList)
+		}
+	}
+
+	return list, err
 }
 
 /* Log's in with client registered credentials (USER, PASS sequence) */
@@ -184,4 +279,82 @@ func (c *Client) LogIn(credentials *Credentials.Credentials) (bool, error) {
 	)
 
 	return command.Success(), command.LastError()
+}
+
+/* List's the contents of the current directory in a parsable manner */
+func (c *Client) MachineList(dir string) (l string, err error) {
+	if len(dir) == 0 {
+		/* Fallback on current directory */
+		dir = c.currentDir
+	} else {
+		dir = c.toAbsolutePath(dir)
+	}
+
+	if !c.InPassiveMode() {
+		_, err = c.PassiveMode()
+	}
+
+	if err != nil {
+		return EmptyString, err
+	}
+
+	list, err := c.Commands.MLSD(dir)
+	return string(list), err
+}
+
+/* List information about the specified file */
+func (c *Client) MachineListFile(file string) (p string, err error) {
+	if len(file) == 0 {
+		/* Fallback on current directory */
+		return EmptyString, ClientCommands.ERR_InvalidFileName
+	} else {
+		file = c.toAbsolutePath(file)
+	}
+
+	if !c.InPassiveMode() {
+		_, err = c.PassiveMode()
+	}
+
+	if err != nil {
+		return EmptyString, err
+	}
+
+	list, err := c.Commands.MLST(file)
+	return string(list), err
+}
+
+/* Puts the client in passive mode, and makes the client ready for accessing the data connection */
+func (c *Client) PassiveMode() (bool, error) {
+	return c.passiveMode(!c.IsIPv4())
+}
+
+/* Puts the client in passive mode, forces usage of EPSV command */
+func (c *Client) PassiveModeEPSV() (bool, error) {
+	return c.passiveMode(true)
+}
+
+/* Activates the passive mode if possible, and marks the internal options */
+func (c *Client) passiveMode(epsv bool) (ok bool, err error) {
+	if epsv {
+		ok, err = c.Commands.EPSV()
+
+		if ok {
+			c.settings.Get(OPT_ExtendedPassive).Set(true)
+			c.settings.Get(OPT_PassiveMode).Reset()
+		}
+	} else {
+		ok, err = c.Commands.PASV()
+
+		if ok {
+			c.settings.Get(OPT_PassiveMode).Set(true)
+			c.settings.Get(OPT_ExtendedPassive).Reset()
+		}
+	}
+
+	return
+}
+
+/* Gets the system type */
+func (c *Client) System() (string, error) {
+	return c.Commands.SYST()
 }
