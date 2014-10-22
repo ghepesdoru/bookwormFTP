@@ -7,6 +7,7 @@ import (
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
 	Commands "github.com/ghepesdoru/bookwormFTP/core/commands"
 	Credentials "github.com/ghepesdoru/bookwormFTP/core/credentials"
+	Logger	"github.com/ghepesdoru/bookwormFTP/core/logger"
 	Parser "github.com/ghepesdoru/bookwormFTP/core/parser"
 	Reader "github.com/ghepesdoru/bookwormFTP/core/reader"
 	Response "github.com/ghepesdoru/bookwormFTP/core/response"
@@ -43,27 +44,28 @@ var (
 	ERR_InvalidDataAddr         = fmt.Errorf("Invalid data connection Addr.")
 
 	/* Error formats */
-	ERRF_InvalidCommandName          = "Command error: Unrecognized command %s."
-	ERRF_InvalidCompletionStatus     = "Command error: %s completed without meeting any of the %s status. Completion status: %d, completion message %s"
-	ERRF_InvalidCommandOutOfSequence = "Command error: %s could not complete. Use a sequence for fequential commands. Intermediary status: %d, message: %s"
-	ERRF_CommandMaxRetries           = "Command error: %s reached the maximum number of retries. Transient Negative Completion reply status %d, message: %s"
+	ERRF_InvalidCommandName          = "Unrecognized command %s."
+	ERRF_InvalidCompletionStatus     = "%s completed without meeting any of the %s status. Completion status: %d, completion message %s"
+	ERRF_InvalidCommandOutOfSequence = "%s could not complete. Use a sequence for fequential commands. Intermediary status: %d, message: %s"
+	ERRF_CommandMaxRetries           = "%s reached the maximum number of retries. Transient Negative Completion reply status %d, message: %s"
 	ERRF_CommandFailure              = "Command failure: %d %s"
 	ERRF_MissingPortInHost           = "missing port in address"
 )
 
 /* BookwormFTP Requester type definition */
 type Requester struct {
-	controlConnection Net.Conn
-	controlReader     *Reader.Reader
-	dataConnection    Net.Conn
-	dataReader        *Reader.Reader
-	hostAddress       *Address.Addr
-	dataAddress       *Address.Addr
-	credentials       *Credentials.Credentials
-	initDir           string
-	initFile          string
-	connected         bool
-	ready             bool
+	controlConnection 	Net.Conn
+	controlReader     	*Reader.Reader
+	dataConnection    	Net.Conn
+	dataReader        	*Reader.Reader
+	hostAddress       	*Address.Addr
+	dataAddress       	*Address.Addr
+	credentials       	*Credentials.Credentials
+	initDir           	string
+	initFile          	string
+	connected         	bool
+	ready             	bool
+	Logger				*Logger.Logger
 }
 
 /* Generates a new Requester using any of the supported ip versions. (IPv4 first) */
@@ -86,6 +88,12 @@ func NewRequesterIPv6(hostURL string) (*Requester, error) {
 	return preprocessRequesterBuild(hostURL, Address.IPv6)
 }
 
+/* Initial url credentials getter */
+func (r *Requester) GetCredentials() *Credentials.Credentials {
+	return r.credentials
+}
+
+/* Host address Addr getter */
 func (r *Requester) GetHostAddr() *Address.Addr {
 	return Address.FromConnection(r.controlConnection)
 }
@@ -124,7 +132,15 @@ func (r *Requester) RegisterDataAddr(addr *Address.Addr) (bool, error) {
 
 /* Make a request to the server */
 func (r *Requester) Request(command *Command.Command) *Command.Command {
+	r.Logger.Information("Executing: " + command.String())
 	r.execute(command, false, true, CommandRetries)
+
+	if command.Success() {
+		r.Logger.Information(command.Name() + " successfull.")
+	} else {
+		r.Logger.Information(command.Name() + " failed." + command.LastError().Error())
+	}
+
 	return command
 }
 
@@ -243,6 +259,12 @@ func buildRequester(hostAddr *Address.Addr, credentials *Credentials.Credentials
 	if len(navigateTo) > 0 {
 		navigateTo = "/" + navigateTo
 		navigateTo = Path.Clean(navigateTo)
+
+		if Path.Ext(navigateTo) == EmptyString {
+			/* Supose the last resource in path is a directory (valid for most cases) */
+			navigateTo += "/"
+		}
+
 		dir, file = Path.Split(navigateTo)
 
 		if len(dir) == 0 || dir == DefaultWorkingDir {
@@ -251,7 +273,7 @@ func buildRequester(hostAddr *Address.Addr, credentials *Credentials.Credentials
 	}
 
 	/* Instantiate the new Requester */
-	requester = &Requester{conn, Reader.NewReader(conn), nil, nil, hostAddr, nil, credentials, dir, file, true, false}
+	requester = &Requester{conn, Reader.NewReader(conn), nil, nil, hostAddr, nil, credentials, dir, file, true, false, Logger.NewNullLogger()}
 
 	/* Grab server greeting, and check for server ready status */
 	welcomeMessage, _ := requester.getResponse()
@@ -275,15 +297,15 @@ func (r *Requester) getResponse() (response *Response.Response, err error) {
 
 	if parser.HasErrors() {
 		/* Debug point */
-		for err := range parser.Errors() {
-			fmt.Println("Parsing error: ", err)
+		for _, err := range parser.Errors() {
+			r.Logger.Critical(err.Error())
 		}
 
 		err = ERR_ResponseParsingError
 	} else {
 		if parser.Length() > 1 {
 			/* Debug point. This will happen if multiple commands are executed before calling getResponse */
-			fmt.Println("Accumulation of responses not consumed: ", string(raw))
+			r.Logger.Critical("Accumulation of responses not consumed: " + string(raw))
 
 			err = ERR_UnconsumedResponses
 		} else {
@@ -329,7 +351,9 @@ func (r *Requester) listenDataChannel() (ok bool, err error) {
 func (r *Requester) closeDataChannel() (ok bool, data []byte) {
 	if r.dataReader != nil {
 		data = r.dataReader.Get()
-		r.dataReader.StopReading()
+		if r.dataReader.IsActive() {
+			r.dataReader.StopReading()
+		}
 		r.dataReader = nil
 		ok = true
 	}
@@ -349,6 +373,7 @@ func (r *Requester) request(command *Command.Command) (bool, error) {
 /* Executes the specified command listening on the data connection. */
 func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Command, []byte) {
 	var err error
+	r.Logger.Information("Executing: " + command.String())
 
 	/* Listen for incoming data on the data connection (if required) */
 	_, err = r.listenDataChannel()
@@ -361,7 +386,11 @@ func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Comma
 	r.execute(command, false, true, CommandRetries)
 	_, data := r.closeDataChannel()
 
-	fmt.Println("Command status:", command.Success(), command.Response(), command.LastError())
+	if command.Success() {
+		r.Logger.Information(command.Name() + " successfull.")
+	} else {
+		r.Logger.Information(command.Name() + " failed." + command.LastError().Error())
+	}
 
 	return command, data
 }
@@ -369,6 +398,7 @@ func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Comma
 /* Executes a command (wrapper around request, takes care of response reading, error handling, and is status aware) */
 func (r *Requester) execute(command *Command.Command, isSequence bool, execute bool, leftRetries int) (*Command.Command) {
 	var err error
+	var status int = -1
 
 	if command.Name() == Commands.UnknownCommand {
 		command.AddError(Commands.ERR_InvalidCommandName)
@@ -397,8 +427,11 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 		/* Block until the server responds or the data connection closes */
 		for {
 			if !r.dataReader.IsActive() {
-				/* Break the waiting if the data reader is closed. */
-				break
+				/* Break the waiting if the data reader is closed. Mark a status of DataConnectionClose */
+				if command.IsExpectedStatus(Status.DataConnectionClose) {
+					status = Status.DataConnectionClose
+					break
+				}
 			}
 
 			/* Keep searching for content up to the pipe dead timeout. */
@@ -415,7 +448,7 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 		command.AttachResponse(r.getResponse())
 	}
 
-	if command.Response() == nil {
+	if command.Response() == nil && status == -1{
 		/* Empty server response */
 		command.AddError(ERR_NoServerResponse)
 
@@ -423,10 +456,10 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 		command.AttachResponse(&Response.Response{}, nil)
 
 		return command
+	} else if status == -1 {
+		/* Check response status to determine the execution completion */
+		status = command.Response().Status()
 	}
-
-	/* Check response status to determine the execution completion */
-	status := command.Response().Status()
 
 	/* Check relay status for next action */
 	first := status / 100
@@ -475,7 +508,8 @@ func (r *Requester) sequence(commands []*Command.Command) (ok bool, last *Comman
 
 	for leftRetries > 0 {
 		for _, command := range commands {
-			last = r.Request(command)
+			r.Logger.Information("Executing: " + command.Name())
+			last = r.execute(command, true, true, CommandRetries)
 
 			/* Take into consideration sequence retries */
 			if command.LastError() == ERR_RestartSequence {
@@ -484,7 +518,12 @@ func (r *Requester) sequence(commands []*Command.Command) (ok bool, last *Comman
 				command.FlushErrors()
 				break
 			} else if command.Success() != true {
+				r.Logger.Information(command.Name() + " failed." + command.LastError().Error())
 				break
+			}
+
+			if command.Success() {
+				r.Logger.Information(command.Name() + " successfull.")
 			}
 		}
 

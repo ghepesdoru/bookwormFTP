@@ -7,13 +7,13 @@ import (
 )
 
 var (
-	IPv4 = net.ParseIP("127.0.0.1")
-	IPv6 = net.ParseIP("::1")
+	IPv4Sample = net.ParseIP("127.0.0.1")
+	IPv6SampleSample = net.ParseIP("::1")
 	Port = 49153
-	PORTAddr = Addr{&IPv4, Port, CONST_IPv4}
+	PORTAddr = Addr{&IPv4Sample, Port, IPv4}
 	PORTInput = "127,0,0,1,192,1"
-	EPRTAddrV4 = Addr{&IPv4, Port, CONST_IPv4}
-	EPRTAddrV6 = Addr{&IPv6, Port, CONST_IPv6}
+	EPRTAddrV4 = Addr{&IPv4Sample, Port, IPv4}
+	EPRTAddrV6 = Addr{&IPv6SampleSample, Port, IPv6}
 	EPRTInputV4 = "|1|127.0.0.1|49153|"
 	EPRTInputV6	= "|2|::1|49153|"
 )
@@ -45,24 +45,24 @@ func TestEPRT(t *testing.T) {
 	addr6 := FromExtendedPortSpecifier(EPRTInputV6)
 
 	if addr4.IP.String() != EPRTAddrV4.IP.String() {
-		t.Fatal("Invalid FromExtendedPortSpecifier ip parsing (IPv4).", addr4.IP)
+		t.Fatal("Invalid FromExtendedPortSpecifier ip parsing (IPv4Sample).", addr4.IP)
 	}
 	if addr6.IP.String() != EPRTAddrV6.IP.String() {
-		t.Fatal("Invalid FromExtendedPortSpecifier ip parsing (IPv6).", addr6.IP)
+		t.Fatal("Invalid FromExtendedPortSpecifier ip parsing (IPv6SampleSample).", addr6.IP)
 	}
 
 	if addr4.Port != EPRTAddrV4.Port {
-		t.Fatal("Invalid FromExtendedPortSpecifier port parsing (IPv4).", addr4.Port)
+		t.Fatal("Invalid FromExtendedPortSpecifier port parsing (IPv4Sample).", addr4.Port)
 	}
 	if addr6.Port != EPRTAddrV6.Port {
-		t.Fatal("Invalid FromExtendedPortSpecifier port parsing (IPv6).", addr6.Port)
+		t.Fatal("Invalid FromExtendedPortSpecifier port parsing (IPv6SampleSample).", addr6.Port)
 	}
 
 	if addr4.IPFamily != EPRTAddrV4.IPFamily {
-		t.Fatal("Invalid FromExtendedPortSpecifier ip family parsing (IPv4).", addr4.IPFamily)
+		t.Fatal("Invalid FromExtendedPortSpecifier ip family parsing (IPv4Sample).", addr4.IPFamily)
 	}
 	if addr6.IPFamily != EPRTAddrV6.IPFamily {
-		t.Fatal("Invalid FromExtendedPortSpecifier ip family parsing (IPv6).", addr6.IPFamily)
+		t.Fatal("Invalid FromExtendedPortSpecifier ip family parsing (IPv6SampleSample).", addr6.IPFamily)
 	}
 
 	serialized4 := addr4.ToExtendedPortSpecifier()
@@ -91,17 +91,17 @@ func TestToTCPAddr(t *testing.T) {
 	tcpAddr6 := addr6.ToTCPAddr()
 
 	if addr4.IP.String() != tcpAddr4.IP.String() {
-		t.Fatal("Invalid ToTCPAddr ip translation (IPv4).", tcpAddr4.IP)
+		t.Fatal("Invalid ToTCPAddr ip translation (IPv4Sample).", tcpAddr4.IP)
 	}
 	if addr6.IP.String() != tcpAddr6.IP.String() {
-		t.Fatal("Invalid ToTCPAddr ip translation (IPv6).", tcpAddr6.IP)
+		t.Fatal("Invalid ToTCPAddr ip translation (IPv6SampleSample).", tcpAddr6.IP)
 	}
 
 	if addr4.Port != tcpAddr4.Port {
-		t.Fatal("Invalid ToTCPAddr port translation (IPv4).", tcpAddr4.Port)
+		t.Fatal("Invalid ToTCPAddr port translation (IPv4Sample).", tcpAddr4.Port)
 	}
 	if addr6.Port != tcpAddr6.Port {
-		t.Fatal("Invalid ToTCPAddr port translation (IPv6).", tcpAddr6.Port)
+		t.Fatal("Invalid ToTCPAddr port translation (IPv6SampleSample).", tcpAddr6.Port)
 	}
 }
 
@@ -132,24 +132,24 @@ func TestFromConnection(t *testing.T) {
 	fmt.Println(a4, a6, addr4, addr6, tcpAddr4, tcpAddr6)
 
 	if a4.IP.String() != addr4.IP.String() {
-		t.Fatal("Invalid FromConnection ip extraction (IPv4).", a4.IP)
+		t.Fatal("Invalid FromConnection ip extraction (IPv4Sample).", a4.IP)
 	}
 	if a6.IP.String() != addr6.IP.String() {
-		t.Fatal("Invalid FromConnection ip extraction (IPv6).", a6.IP)
+		t.Fatal("Invalid FromConnection ip extraction (IPv6SampleSample).", a6.IP)
 	}
 
 	/* Extraction from a connection will return an Addr with the the default 0 port */
 	if a4.Port != 0 {
-		t.Fatal("Invalid FromConnection port extraction (IPv4).", a4.Port)
+		t.Fatal("Invalid FromConnection port extraction (IPv4Sample).", a4.Port)
 	}
 	if a6.Port != 0 {
-		t.Fatal("Invalid FromConnection port extraction (IPv6).", a6.Port)
+		t.Fatal("Invalid FromConnection port extraction (IPv6SampleSample).", a6.Port)
 	}
 
 	if a4.IPFamily != addr4.IPFamily {
-		t.Fatal("Invalid FromConnection ip family extraction (IPv4).", a4.IPFamily)
+		t.Fatal("Invalid FromConnection ip family extraction (IPv4Sample).", a4.IPFamily)
 	}
 	if a6.IPFamily != addr6.IPFamily {
-		t.Fatal("Invalid FromConnection ip family extraction (IPv6).", a6.IPFamily)
+		t.Fatal("Invalid FromConnection ip family extraction (IPv6SampleSample).", a6.IPFamily)
 	}
 }

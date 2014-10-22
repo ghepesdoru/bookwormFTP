@@ -16,6 +16,7 @@ const (
 	PortDelimiter = ","
 	IPv4			= 1
 	IPv6			= 2
+	IPvAny			= 0
 )
 
 var (

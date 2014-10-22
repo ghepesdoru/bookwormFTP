@@ -3,8 +3,8 @@ package commands
 import (
 	"fmt"
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
-	Requester "github.com/ghepesdoru/bookwormFTP/client/requester"
 	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
+	Requester "github.com/ghepesdoru/bookwormFTP/client/requester"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
 	"strconv"
 	"strings"
@@ -146,6 +146,15 @@ func (c *Commands) IsReady() (ok bool, err error) {
 	}
 
 	return
+}
+
+/* Requester getter */
+func (c *Commands) Requester() *Requester.Requester {
+	if c.hasAttachedRequester {
+		return c.requester
+	}
+
+	return nil
 }
 
 /* Implementation for all commands that only have to return a status flag and eventual errors */
