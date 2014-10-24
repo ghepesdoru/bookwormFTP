@@ -20,10 +20,19 @@ var KnownCommands map[string]bool = map[string]bool {
 	"EPRT": true,	"EPSV": true,	"FEAT": true, 	"HELP": true, 	"HOST": true,	"LANG": true, 	"LIST": true,
 	"MDTM": true, 	"MIC": true,	"MKD": true,	"MLSD": true, 	"MLST": true, 	"MODE": true, 	"NLST": true,
 	"NOOP": true,	"OPTS": true,	"OPTS_UTF8": true,				"PASS": true, 	"PASV": true, 	"PBSZ": true,
-	"PBSZ+": true,	"PORT": true, 	"PROT": true, "PROT+": true,	"PWD": true, 	"QUIT": true,	"REIN": true,
+	"PBSZ+": true,	"PORT": true, 	"PROT": true, 	"PROT+": true,	"PWD": true, 	"QUIT": true,	"REIN": true,
 	"REST": true,	"REST+": true, 	"RETR": true,	"RMD": true,	"RNFR": true,	"RNTO": true, 	"SITE": true,
 	"SIZE": true, 	"SMNT": true, 	"STAT": true, 	"STOR": true,	"STOU": true,	"STRU": true, 	"SYST": true,
 	"TYPE": true, 	"USER": true,
+}
+
+/* Defines a map of base commands, using the bool value to mark if the feature is mandatory */
+var BaseCommands map[string]bool = map[string]bool {
+	"ABOR": true,	"ACCT": true,	"ALLO": true,	"APPE": true,	"CDUP": false,	"CWD": true,	"DELE": true,
+	"HELP": true,	"LIST": true,	"MKD": false,	"MODE": true,	"NLST": true,	"NOOP": true,	"PASS": true,
+	"PASV": true,	"PORT": true,	"PWD": false,	"QUIT": true,	"REIN": true,	"REST": true,	"RETR": true,
+	"RMD": false,	"RNFR": true,	"RNTO": true,	"SITE": true,	"SMNT": false,	"STAT": true,	"STOR": true,
+	"STOU": false,	"STRU": true,	"SYST": false,	"TYPE": true,	"USER": true,
 }
 
 /* Defines a list of known obsolete commands */
@@ -33,19 +42,23 @@ var ObsoleteCommands map[string]bool = map[string]bool {
 
 /* Maps historic commands to the standards compliant counterparts */
 var ObsoleteToKnown map[string]string = map[string]string {
-	"LPRT": "EPRT",
-	"LPSV": "EPSV",
-	"XCUP": "CDUP",
-	"XCWD": "CWD",
-	"XMKD": "MKD",
-	"XPWD": "PWD",
-	"XRMD": "RMD",
+	"LPRT": "EPRT",	"LPSV": "EPSV",	"XCUP": "CDUP",	"XCWD": "CWD",	"XMKD": "MKD",	"XPWD": "PWD",	"XRMD": "RMD",
 }
 
-/* Checks if the specified argument is a known valid COMMAND */
-func IsValid(cmd string) bool {
-	if KnownCommands[cmd] {
-		return true
+/* Checks if the specified command represents a standard base feature */
+func IsBase(feature string) bool {
+	if f := ToStandardCommand(feature); IsValid(f) {
+		_, ok := BaseCommands[feature]
+		return ok
+	}
+
+	return false
+}
+
+/* Checks if the specified command represents a mandatory feature */
+func IsMandatory(feature string) bool {
+	if f := ToStandardCommand(feature); IsBase(f) {
+		return BaseCommands[feature]
 	}
 
 	return false
@@ -54,6 +67,15 @@ func IsValid(cmd string) bool {
 /* Checks if the specified COMMAND is obsolete (marked as hist in the IANA FTP commands list) */
 func IsObsolete(cmd string) bool {
 	if ObsoleteCommands[cmd] {
+		return true
+	}
+
+	return false
+}
+
+/* Checks if the specified argument is a known valid COMMAND */
+func IsValid(cmd string) bool {
+	if KnownCommands[cmd] {
 		return true
 	}
 

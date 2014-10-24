@@ -2,15 +2,12 @@ package parser
 
 import(
 	StatusCodes "github.com/ghepesdoru/bookwormFTP/core/codes"
+	BaseParser "github.com/ghepesdoru/bookwormFTP/core/parsers/base"
 	"github.com/ghepesdoru/bookwormFTP/core/response"
 	"fmt"
 )
 
 const (
-	CONST_NewLine = 10
-	CONST_NullChar = 0
-	CONST_SpaceChar = 32
-	CONST_CarriageReturn = 13
 	CONST_Space = ' '
 	CONST_MultipleLinesResponseMark = '-'
 )
@@ -108,8 +105,8 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 		c := raw[i]
 
 		/* Greedy. Process once we hit the first non new line character. */
-		if i == last || (r.isNewLiner(c) && !r.isNewLiner(raw[i + 1])) {
-			line = r.trimRight(raw[lastEOL:i])
+		if i == last || (BaseParser.IsNewLiner(c) && !BaseParser.IsNewLiner(raw[i + 1])) {
+			line = BaseParser.TrimRight(raw[lastEOL:i])
 			lastEOL = i
 
 			/* Skip empty lines */
@@ -125,7 +122,7 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 				s := line[j]
 
 				/* Consume whitespaces, and new line */
-				if !r.isWhitespace(s) {
+				if !BaseParser.IsWhitespace(s) {
 					count += 1
 
 					if count <= 3 && StatusCodes.ByteIsNumber(s) {
@@ -183,7 +180,7 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 
 	/* Ignore empty lines */
 	if err == nil && (consumed == 0 || status == -1) {
-		if len(r.trim(raw)) == 0 {
+		if len(BaseParser.Trim(raw)) == 0 {
 			consumed = len(raw)
 		}
 
@@ -202,55 +199,4 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 	}
 
  	return
-}
-
-func (r *Parser) isWhitespace(c byte) bool {
-	if c == CONST_NullChar || c == CONST_SpaceChar || r.isNewLiner(c) {
-		return true
-	}
-
-	return false
-}
-
-func (r *Parser) isNewLiner(c byte) bool {
-	if c == CONST_NewLine || c == CONST_CarriageReturn {
-		return true
-	}
-
-	return false
-}
-
-func (r *Parser) trim (line []byte) []byte {
-	line = r.trimLeft(line)
-	return r.trimRight(line)
-}
-
-func (r *Parser) trimLeft(line []byte) []byte {
-	var start int = 0
-
-	for i, c := range line {
-		if r.isWhitespace(c) && i == start {
-			/* At start of the string */
-			start += 1
-		}
-	}
-
-	return line[start:]
-}
-
-func (r *Parser) trimRight(line []byte) []byte {
-	var length int = len (line) - 1
-	var end int = length
-
-	for i := length; i >= 0; i -= 1 {
-		if r.isWhitespace(line[i]) && end == i {
-			end -= 1
-		}
-	}
-
-	if end < (length + 1) {
-		end += 1
-	}
-
-	return line[:end]
 }

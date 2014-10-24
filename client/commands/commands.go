@@ -173,14 +173,20 @@ func (c *Commands) simpleControlCommand(name string, param string, expected ...i
 
 /* Implementation for all commands that require a server response message on the control connection */
 func (c *Commands) controlCommand(name string, param string, expected ...int) (bool, error, string) {
+	ok, err, msg := c.controlCommandByte(name, param, expected...)
+	return ok, err, string(msg)
+}
+
+/* Implementation of all commands that require a server response message on the control connection without converting the result to string */
+func (c *Commands) controlCommandByte(name string, param string, expected ...int) (bool, error, []byte) {
 	if ok, err := c.IsReady(); !ok {
-		return ok, err, EmptyString
+		return ok, err, []byte{}
 	}
 
 	command := Command.NewCommand(name, param, expected)
 	c.requester.Request(command)
 
-	return command.Success(), command.LastError(), command.Response().Message()
+	return command.Success(), command.LastError(), command.Response().ByteMessage()
 }
 
 /* Implementation for all commands that only require to grab small amounts of data from the data connection. */
@@ -319,9 +325,8 @@ func (c *Commands) EPSV() (ok bool, err error) {
 }
 
 func (c *Commands) FEAT() (features *FeaturesParser.Features, err error) {
-	var response string
-	_, err, response = c.controlCommand("feat", EmptyString, Status.SystemStatus)
-
+	var response []byte
+	_, err, response = c.controlCommandByte("feat", EmptyString, Status.SystemStatus)
 	features = FeaturesParser.FromFeaturesList(response)
 
 	if !features.HasFeatures() {
