@@ -1,14 +1,10 @@
 package access
 
-import (
-	"strings"
-)
-
 var (
-	KnownPermissions = map[string]bool {
-		"a": PERM_Append, 	"c": PERM_Create, 	"d": PERM_Delete, 	"e": PERM_Execute,
-		"f": PERM_Rename, 	"l": PERM_List, 	"m": PERM_Make, 	"p": PERM_Purge,
-		"r": PERM_Retrievable, 					"w": PERM_Storable,
+	KnownPermissions = map[byte]Perm {
+		97: PERM_Append, 	99: PERM_Create, 	100: PERM_Delete, 	101: PERM_Execute,
+		102: PERM_Rename, 	108: PERM_List, 	109: PERM_Make, 	112: PERM_Purge,
+		114: PERM_Retrievable, 					119: PERM_Storable,
 	}
 )
 
@@ -33,16 +29,16 @@ type AccessRights struct {
 }
 
 /* Given an array of permissions instantiates a new AccessRights */
-func NewAccessRights(perm []Perm) {
+func NewAccessRights(perm []Perm) *AccessRights {
 	return &AccessRights{perm}
 }
 
 /* Create a new AccessRights instance from a perm input */
-func FromPermString(perm string) {
+func FromPermString(p []byte) *AccessRights {
 	var perm []Perm
 
-	for identifier, v := range KnownPermissions {
-		if strings.Contains(identifier) {
+	for _, c := range p {
+		if v, ok := KnownPermissions[c]; ok {
 			perm = append(perm, v)
 		}
 	}

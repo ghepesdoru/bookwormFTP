@@ -85,11 +85,6 @@ var KnownStatusCodes map[int]bool = map[int]bool {
 	10000: true, 10054: true, 10060: true, 10061: true, 10066: true, 10068: true,
 }
 
-/* Map of byte values to numeric counterparts */
-var Numbers map[byte]int = map[byte]int {
-	48: 0, 49: 1, 50: 2, 51: 3, 52: 4, 53: 5, 54: 6, 55: 7, 56: 8, 57: 9,
-}
-
 /* Checks if the given argument is a known valid status code */
 func IsValid (status int) bool {
 	if KnownStatusCodes[status] {
@@ -97,31 +92,4 @@ func IsValid (status int) bool {
 	}
 
 	return false
-}
-
-/* Checks if the given argument can represent a valid number */
-func ByteIsNumber (n byte) bool {
-	_, ok := Numbers[n]
-	return ok
-}
-
-/* Converts a slice of bytes into an int, breaking at first non numeric byte - only working for unsigned */
-func ToInt (n []byte) int {
-	var nr int = -1
-
-	for _, v := range n {
-		if !ByteIsNumber(v) {
-			break
-		} else {
-			i, _ := Numbers[v]
-
-			if nr == -1 {
-				nr = i
-			} else {
-				nr = nr * 10 + i
-			}
-		}
-	}
-
-	return nr
 }

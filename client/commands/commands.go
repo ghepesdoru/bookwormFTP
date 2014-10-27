@@ -4,10 +4,11 @@ import (
 	"fmt"
 	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
+	BaseParser "github.com/ghepesdoru/bookwormFTP/core/parsers/base"
 	FeaturesParser "github.com/ghepesdoru/bookwormFTP/core/parsers/features"
+	ResourceParser "github.com/ghepesdoru/bookwormFTP/core/parsers/resource"
 	Requester "github.com/ghepesdoru/bookwormFTP/client/requester"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -43,7 +44,6 @@ var (
 	ERR_NotReady       = fmt.Errorf("Invalid requester. The specified requester did not received a Ready message from the server.")
 	ERR_NoRequester    = fmt.Errorf("Unable to execute specified action due to unnavailability of a valid Requester.")
 	ERR_NoFeatures     = fmt.Errorf("Server supported features unavailable.")
-	ERR_InvalidTimeVal = fmt.Errorf("Invalid time-val representation.")
 	ERR_InvalidMode    = fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
 	ERR_NoPWDResult    = fmt.Errorf("Could not determine the current working directory.")
 	ERR_InvalidStruct  = fmt.Errorf("Invalid file structure type. Please consider using one of the default types: F, R, P.")
@@ -51,22 +51,6 @@ var (
 )
 
 var (
-	/* Translation map from int to time.Month */
-	IntToMonth = map[int]time.Month{
-		1:  time.January,
-		2:  time.February,
-		3:  time.March,
-		4:  time.April,
-		5:  time.May,
-		6:  time.June,
-		7:  time.July,
-		8:  time.August,
-		9:  time.September,
-		10: time.October,
-		11: time.November,
-		12: time.December,
-	}
-
 	/* Definition of valid representation types */
 	RepresentationTypes = map[string]map[string]bool{
 		/* ASCII type */
@@ -203,54 +187,6 @@ func asUpperNormalized(s string) string {
 	return strings.TrimSpace(strings.ToUpper(s))
 }
 
-/* Parses a time-val (YYYYMMDDHHMMSS.sss - RFC-3659) representation and generates a new Time instance with obtained data */
-func (c *Commands) parseTimeVal(timeVal string) (t *time.Time, err error) {
-	var year, month, day, hour, min, sec, nsec int
-	var dot rune = rune('.')
-	var inMilliseconds bool = false
-	timeVal = strings.TrimSpace(timeVal)
-
-	for i, c := range timeVal {
-		if c != dot {
-			d, err := strconv.Atoi(string(c))
-
-			if err != nil {
-				/* Stop parsing on wrong formatted data */
-				return t, ERR_InvalidTimeVal
-			}
-
-			if i < 4 {
-				/* Year part */
-				year = year*10 + d
-			} else if i < 6 {
-				month = month*10 + d
-			} else if i < 8 {
-				day = day*10 + d
-			} else if i < 10 {
-				hour = hour*10 + d
-			} else if i < 12 {
-				min = min*10 + d
-			} else if i < 14 {
-				sec = sec*10 + d
-			} else if inMilliseconds {
-				nsec = nsec*10 + d
-			}
-		} else {
-			/* Milliseconds start here */
-			inMilliseconds = true
-		}
-	}
-
-	/* Check for invalid month formats */
-	if _, ok := IntToMonth[month]; !ok {
-		return t, ERR_InvalidTimeVal
-	}
-
-	location, err := time.LoadLocation("Etc/GMT")
-	aux := time.Date(year, IntToMonth[month], day, hour, min, sec, nsec, location)
-	return &aux, err
-}
-
 /* COMMANDS definitions --------------------------------------------------------------------------- */
 func (c *Commands) ABOR() (bool, error) {
 	return c.simpleControlCommand("abor", EmptyString, 0)
@@ -354,11 +290,11 @@ func (c *Commands) LIST(path string) ([]byte, error) {
 }
 
 func (c *Commands) MDTM(path string) (t *time.Time, err error) {
-	var result string
-	_, err, result = c.controlCommand("mdtm", path, Status.FileStatus)
+	var result []byte
+	_, err, result = c.controlCommandByte("mdtm", path, Status.FileStatus)
 
 	if err == nil {
-		t, err = c.parseTimeVal(result)
+		t, err = BaseParser.ParseTimeVal(result)
 	}
 
 	return
@@ -373,7 +309,11 @@ func (c *Commands) MKD(dir string) (bool, error) {
 }
 
 func (c *Commands) MLSD(dir string) ([]byte, error) {
-	return c.simpleDataCommand("mlsd", dir, Status.DataConnectionClose)
+	data, err := c.simpleDataCommand("mlsd", dir, Status.DataConnectionClose)
+	res, err := ResourceParser.FromMLSxList(data)
+	fmt.Println(res)
+
+	return data, err
 }
 
 func (c *Commands) MLST(file string) ([]byte, error) {
@@ -506,7 +446,7 @@ func (c *Commands) SITE(params string) (bool, error) {
 
 func (c *Commands) SIZE(fileName string) (int, error) {
 	_, err, response := c.controlCommand("size", fileName, Status.FileStatus)
-	return Status.ToInt([]byte(response)), err
+	return BaseParser.ToInt([]byte(response)), err
 }
 
 func (c *Commands) SMNT(path string) (bool, error) {

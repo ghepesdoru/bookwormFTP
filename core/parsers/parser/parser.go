@@ -125,12 +125,12 @@ func (r *Parser) parse(raw []byte) (resp *response.Response, consumed int, err e
 				if !BaseParser.IsWhitespace(s) {
 					count += 1
 
-					if count <= 3 && StatusCodes.ByteIsNumber(s) {
+					if count <= 3 && BaseParser.ByteIsNumber(s) {
 						/* The line status has to be contained within the first 3 visible characters */
 						if lineStatus == -1 {
-							lineStatus = StatusCodes.ToInt([]byte{s})
+							lineStatus = BaseParser.ToInt([]byte{s})
 						} else {
-							lineStatus = lineStatus * 10 + StatusCodes.ToInt([]byte{s})
+							lineStatus = lineStatus * 10 + BaseParser.ToInt([]byte{s})
 						}
 					} else if !multipleLines && s == CONST_MultipleLinesResponseMark {
 						/* Fill in case. The multiple lines flag will be determined by valid lines count. */
