@@ -252,11 +252,109 @@ func determineMIME(fileExtension string) (mime MIMEType) {
 	return
 }
 
+/* Checks if the current resource ca be appended */
+func (r *Resource) CanBeAppended() bool {
+	return r.IsFile() && r.Permissions.Contains(Access.PERM_Append)
+}
+
+/* Checks if the current resource can be extended (new resources added/appended) */
+func (r *Resource) CanBeExtended() bool {
+	return r.IsDir() && r.Permissions.Contains(Access.PERM_Create)
+}
+
+/* Checks if the current resource can be listed by a LIST/NLST/MLSD command */
+func (r *Resource) CanBeListed() bool {
+	return r.IsDir() && r.Permissions.Contains(Access.PERM_List)
+}
+
+/* Checks if the current resource can be navigated by using the CDUP and CWD commands */
+func (r *Resource) CanBeNavigated() bool {
+	return r.IsDir() && r.Permissions.Contains(Access.PERM_Execute)
+}
+
+/* Checks if all contained elements of the current resource can be removed */
+func (r *Resource) CanBePurged() bool {
+	return r.IsDir() && r.Permissions.Contains(Access.PERM_Purge)
+}
+
+/* Checks if the current resource can be renamed */
+func (r *Resource) CanBeRenamed() bool {
+	return r.Permissions.Contains(Access.PERM_Rename)
+}
+
+/* Checks if the current resource can be removed from it's container */
+func (r *Resource) CanBeRemoved() bool {
+	return r.Permissions.Contains(Access.PERM_Delete)
+}
+
+/* Checks if the current resource can be downloaded */
+func (r *Resource) CanBeRetrieved() bool {
+	return (r.IsFile() || r.Type == TYPE_Other) && r.Permissions.Contains(Access.PERM_Retrievable)
+}
+
+/* Checks if the current resource can be stored (STOR) */
+func (r *Resource) CanBeStored() bool {
+	return r.IsFile() && r.Permissions.Contains(Access.PERM_Storable)
+}
+
+/* Checks if the current resource become the parent container of a new dir resource */
+func (r *Resource) CanHostNewDirs() bool {
+	return r.IsDir() && r.Permissions.Contains(Access.PERM_Make)
+}
+
+/* Checks if any contained resource has the specified name */
+func (r *Resource) ContainsByName(resourceName string) bool {
+	return r.GetContentByName(resourceName) != nil
+}
+
+/* Check if the two resources refer to the same resource */
+func (r *Resource) Equals(res *Resource) bool {
+	return r.Name == res.Name && r.Unique == res.Unique
+}
+
+/* Gets the first resource matching the specified name from the current resource's contents */
+func (r *Resource) GetContentByName(resourceName string) *Resource {
+	for _, res := range r.Content {
+		if res.Name == resourceName {
+			return res
+		}
+	}
+
+	return nil
+}
+
+/* Gets the first resource matching the specified unique from the current resource's contents */
+func (r *Resource) GetContentByUnique(unique string) *Resource {
+	for _, res := range r.Content {
+		if res.Unique == unique {
+			return res
+		}
+	}
+
+	return nil
+}
+
+/* Checks if the current resource is binary */
+func (r *Resource) IsBinary() bool {
+	return r.MIME == MIME_Binary
+}
+
 /* Checks if the current resource is the current container directory */
 func (r *Resource) IsCurrentDir() bool {
 	return r.Type == TYPE_CDir
 }
 
+/* Checks if the current resource of one of the dir types */
+func (r *Resource) IsDir() bool {
+	return r.Type == TYPE_CDir || r.Type == TYPE_PDir || r.Type == TYPE_Dir
+}
+
+/* Checks if the current resource is a file */
+func (r *Resource) IsFile() bool {
+	return r.Type == TYPE_File
+}
+
+/* Checks if the current resource is a the container directory */
 func (r *Resource) IsParentDir() bool {
 	return r.Type == TYPE_PDir
 }

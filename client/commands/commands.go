@@ -10,6 +10,7 @@ import (
 	Requester "github.com/ghepesdoru/bookwormFTP/client/requester"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
 	"strings"
+	"strconv"
 	"time"
 )
 
@@ -17,37 +18,43 @@ const (
 	EmptyString = ""
 
 	/* Types */
-	TYPE_Ascii     = "A"
-	TYPE_Ebcdic    = "E"
-	TYPE_Image     = "I"
-	TYPE_LocalByte = "L"
+	TYPE_Ascii     		= "A"
+	TYPE_Ebcdic    		= "E"
+	TYPE_Image     		= "I"
+	TYPE_LocalByte 		= "L"
+	TYPE_Unspecified 	= "U"
 
 	/* Format controls */
-	FMTCTRL_NonPrint = "N"
-	FMTCTRL_Telnet   = "T"
-	FMTCTRL_Carriage = "C"
+	FMTCTRL_NonPrint 	= "N"
+	FMTCTRL_Telnet   	= "T"
+	FMTCTRL_Carriage 	= "C"
+	FMTCTRL_Unspecified = "U"
 
 	/* Transfer modes */
-	TRANSFER_Stream      = "S"
-	TRANSFER_Block       = "B"
-	TRANSFER_Compressed  = "C"
-	TRANSFER_Unspecified = "U"
+	TRANSFER_Stream     = "S"
+	TRANSFER_Block      = "B"
+	TRANSFER_Compressed = "C"
+	TRANSFER_Unspecified= "U"
 
-	FILESTRUCT_File   = "F"
-	FILESTRUCT_Record = "R"
-	FILESTRUCT_Page   = "P"
+	FILESTRUCT_File  	= "F"
+	FILESTRUCT_Record 	= "R"
+	FILESTRUCT_Page   	= "P"
+	FILESTRUCT_Unspecified = "U"
 )
 
 /* Default errors definition */
 var (
-	ERR_NotConnected   = fmt.Errorf("Invalid requester. The specified requester has no active connection to server.")
-	ERR_NotReady       = fmt.Errorf("Invalid requester. The specified requester did not received a Ready message from the server.")
-	ERR_NoRequester    = fmt.Errorf("Unable to execute specified action due to unnavailability of a valid Requester.")
-	ERR_NoFeatures     = fmt.Errorf("Server supported features unavailable.")
-	ERR_InvalidMode    = fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
-	ERR_NoPWDResult    = fmt.Errorf("Could not determine the current working directory.")
-	ERR_InvalidStruct  = fmt.Errorf("Invalid file structure type. Please consider using one of the default types: F, R, P.")
-	ERR_InvalidFileName= fmt.Errorf("Invalid file name.")
+	ERR_NotConnected   	= fmt.Errorf("Invalid requester. The specified requester has no active connection to server.")
+	ERR_NotReady       	= fmt.Errorf("Invalid requester. The specified requester did not received a Ready message from the server.")
+	ERR_NoRequester    	= fmt.Errorf("Unable to execute specified action due to unnavailability of a valid Requester.")
+	ERR_NoFeatures     	= fmt.Errorf("Server supported features unavailable.")
+	ERR_InvalidMode    	= fmt.Errorf("Invalid transfer mode. Please consider using one of the available transfer modes (S, B, C).")
+	ERR_NoPWDResult    	= fmt.Errorf("Could not determine the current working directory.")
+	ERR_InvalidStruct  	= fmt.Errorf("Invalid file structure type. Please consider using one of the default types: F, R, P.")
+	ERR_InvalidFileName	= fmt.Errorf("Invalid file name.")
+	ERR_InvalidType		= fmt.Errorf("Invalid type specified. Please consider using one of the available types (A, E, I, L).")
+	ERR_InvalidFMTCTRL	= fmt.Errorf("Invalid format control. Please consider using one of the avialable format controls (N, T, C).")
+	ERR_InvalidByteSize	= fmt.Errorf("Invalid byte size for Local byte Byte size type.")
 )
 
 var (
@@ -439,8 +446,8 @@ func (c *Commands) REST_PLUS(marker string) (bool, error) {
 	return c.simpleControlCommand("rest+", marker, Status.FileActionPending)
 }
 
-func (c *Commands) RETR(path string) (bool, error) {
-	return false, nil
+func (c *Commands) RETR(path string) ([]byte, error) {
+	return c.simpleDataCommand("retr", path, Status.DataConnectionClose)
 }
 
 func (c *Commands) RMD(path string) (bool, error) {
@@ -495,8 +502,49 @@ func (c *Commands) SYST() (string, error) {
 	return string(sysType), err
 }
 
-func (c *Commands) TYPE(reprType string) (bool, error) {
-	return c.simpleControlCommand("type", reprType, Status.PositiveCompletion)
+func (c *Commands) TYPE(representationType string, typeParameter interface {}) (ok bool, err error) {
+	var formatControl, byteSize bool
+
+	/* Check if the specified type is supported */
+	if _, ok = RepresentationTypes[representationType]; !ok {
+		/* Unsupported representation type */
+		return false, ERR_InvalidType
+	}
+
+	/* Determine parameter type */
+	switch typeParameter.(type) {
+	case string:
+		/* Text representation type (A & E) format control */
+		formatControl = true
+	case int:
+		/* Local byte Byte size type (L) */
+		byteSize = true
+	}
+
+	if formatControl {
+		/* Check if the specified type and format control represent a valid combination */
+		if len(typeParameter.(string)) == 0 {
+			/* Default to non print format control */
+			typeParameter = FMTCTRL_NonPrint
+		} else {
+			aux := RepresentationTypes[representationType]
+			if _, ok := aux[typeParameter.(string)]; !ok {
+				return false, ERR_InvalidFMTCTRL
+			}
+		}
+
+		return c.simpleControlCommand("type", representationType + " " + typeParameter.(string), Status.PositiveCompletion)
+	} else  if byteSize {
+		/* Local byte Byte size type */
+		if typeParameter.(int) < 1 {
+			return false, ERR_InvalidByteSize
+		}
+
+		return c.simpleControlCommand("type", TYPE_LocalByte + " " + strconv.Itoa(typeParameter.(int)), Status.PositiveCompletion)
+	} else {
+		/* Image type (binary) */
+		return c.simpleControlCommand("type", TYPE_Image, Status.PositiveCompletion)
+	}
 }
 
 func (c *Commands) USER(username string) (bool, error) {

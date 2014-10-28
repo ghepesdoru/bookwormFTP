@@ -336,17 +336,16 @@ func (r *Requester) establishDataConnection() (conn Net.Conn, err error) {
 
 /* Start listening for incoming data in the data channel */
 func (r *Requester) listenDataChannel() (ok bool, err error) {
-	var dataConnection Net.Conn
-
 	if r.dataReader != nil {
 		/* Stop the old reader from reading, and instantiate a new one for the current data connection. */
 		r.dataReader.StopReading()
+		r.dataConnection.Close()
 	}
 
-	dataConnection, err = r.establishDataConnection()
+	r.dataConnection, err = r.establishDataConnection()
 
 	if err == nil {
-		r.dataReader = Reader.NewReader(dataConnection)
+		r.dataReader = Reader.NewReader(r.dataConnection)
 		ok = true
 	}
 
@@ -361,6 +360,7 @@ func (r *Requester) closeDataChannel() (ok bool, data []byte) {
 			r.dataReader.StopReading()
 		}
 		r.dataReader = nil
+		r.dataConnection = nil
 		ok = true
 	}
 
@@ -388,7 +388,6 @@ func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Comma
 		command.AddError(err)
 		return command, []byte{}
 	}
-
 	r.execute(command, false, true, CommandRetries)
 	_, data := r.closeDataChannel()
 
@@ -436,6 +435,7 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 				/* Break the waiting if the data reader is closed. Mark a status of DataConnectionClose */
 				if command.IsExpectedStatus(Status.DataConnectionClose) {
 					status = Status.DataConnectionClose
+					r.dataConnection.Close() /* Destroy data connection descriptor at this point */
 					break
 				}
 			}

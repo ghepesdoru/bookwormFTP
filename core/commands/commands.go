@@ -45,6 +45,14 @@ var ObsoleteToKnown map[string]string = map[string]string {
 	"LPRT": "EPRT",	"LPSV": "EPSV",	"XCUP": "CDUP",	"XCWD": "CWD",	"XMKD": "MKD",	"XPWD": "PWD",	"XRMD": "RMD",
 }
 
+var RFC3659 = map[string]bool {
+	/* Mapping of commands defined in RFC3659 -
+	practically most servers implement FTP up to a specified standard version.
+	Testing for feature existence outside the FEAT reply listings often ends finding
+	non explicitly specified working features. */
+	"MDTM": true,	"MLST": true,	"MLSD": true,	"REST+": true,	"SIZE": true, 	"TVFS": true,
+}
+
 /* Checks if the specified command represents a standard base feature */
 func IsBase(feature string) bool {
 	if f := ToStandardCommand(feature); IsValid(f) {
@@ -66,7 +74,15 @@ func IsMandatory(feature string) bool {
 
 /* Checks if the specified COMMAND is obsolete (marked as hist in the IANA FTP commands list) */
 func IsObsolete(cmd string) bool {
-	if ObsoleteCommands[cmd] {
+	if ObsoleteCommands[strings.ToUpper(strings.TrimSpace(cmd))] {
+		return true
+	}
+
+	return false
+}
+
+func IsRFC3659(cmd string) bool {
+	if RFC3659[strings.ToUpper(strings.TrimSpace(cmd))] {
 		return true
 	}
 

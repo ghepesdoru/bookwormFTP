@@ -25,7 +25,7 @@ type Features struct{
 	hasFeatures bool
 }
 
-/* Build a new features instance */
+/* Build a new features instance (it supposes MLST as supported by default) */
 func NewFeatures() *Features {
 	return &Features{make(map[string]string), false}
 }
@@ -155,6 +155,14 @@ func (f *Features) extractFeature(line []byte) {
 	}
 
 	f.AddFeature(string(feature), string(params))
+
+	/* Threat special cases (features with same FEAT code/defined in the same standard version) */
+	if Commands.IsRFC3659(string(feature)) {
+		/* Add all features defined by RFC3659 to the current features set. */
+		for feat, _ := range Commands.RFC3659 {
+			f.AddFeature(feat, EmptyString)
+		}
+	}
 }
 
 /* To string conversion */

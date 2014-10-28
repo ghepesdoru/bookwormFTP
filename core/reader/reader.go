@@ -123,7 +123,7 @@ func (r *Reader) StatusCode() int {
 	return r.status
 }
 
-/* Stops the reader from reading any other input, as soon as possible */
+/* Stops the reader from reading any other input */
 func (r *Reader) StopReading() {
 	r.connAvailable = false
 }

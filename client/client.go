@@ -1,7 +1,7 @@
 package client
 
 import(
-//	"fmt"
+	"fmt"
 	Address 		"github.com/ghepesdoru/bookwormFTP/core/addr"
 	ClientCommands 	"github.com/ghepesdoru/bookwormFTP/client/commands"
 	Credentials 	"github.com/ghepesdoru/bookwormFTP/core/credentials"
@@ -36,6 +36,9 @@ const (
 	OPT_FileStructure	= "file_structure"
 )
 
+var (
+	ERR_NonRetrievable	= fmt.Errorf("Non retrievable resource.")
+)
 
 /* BookwormFTP Client type definition */
 type Client struct {
@@ -84,13 +87,15 @@ func NewClient(address string) (client *Client, err error) {
 	/* Check for initial path, and navigate there if available */
 	dir, _ = client.requester.GetInitialPath()
 
+	/* Enforce transfer parameters defaults (as specified by RFC959) */
+	client.RepresentationType(ClientCommands.TYPE_Ascii, ClientCommands.FMTCTRL_NonPrint)
+	client.TransferMode(ClientCommands.TRANSFER_Stream)
+	client.FileStructure(ClientCommands.FILESTRUCT_File)
+
 	if dir != EmptyString {
 		_, err = client.ChangeDir(dir)
-	}
-
-	/* List the current directory */
-	if _, err = client.List(); err != nil {
-		return
+	} else {
+		_, err = client.List()
 	}
 
 	return
@@ -162,10 +167,10 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 			Settings.NewOption(OPT_Account, EmptyString),
 			Settings.NewOption(OPT_AccountEnabled, false),
 			Settings.NewOption(OPT_TransferMode, ClientCommands.TRANSFER_Unspecified),
-			Settings.NewOption(OPT_DataType, ClientCommands.TYPE_Ascii),
-			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_NonPrint),
+			Settings.NewOption(OPT_DataType, ClientCommands.TYPE_Unspecified),
+			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_Unspecified),
 			Settings.NewOption(OPT_ByteSize, 8),
-			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_File),
+			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_Unspecified),
 		), nil, nil}
 
 		/* Enable debugging */
@@ -181,7 +186,7 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 func (c *Client) extractPathElements(p string) (dir string, file string) {
 	p = Path.Clean(p)
 
-	if Path.Ext(p) == EmptyString {
+	if Path.Ext(p) == EmptyString && p != RootDir {
 		p = p + "/"
 	}
 
@@ -190,10 +195,15 @@ func (c *Client) extractPathElements(p string) (dir string, file string) {
 
 /* Given a relative path, will concatenate it with the current working directory and normalize it */
 func (c *Client) toAbsolutePath (d string) string {
+	var f string
 	if !Path.IsAbs(d) {
 		/* Not an absolute path, concatenate the relative path to the working directory, and normalize them together  */
-		d = c.currentDir + RootDir + d
-		d, f := c.extractPathElements(d)
+		if len(d) == 0 {
+			d = c.currentDir
+		} else {
+			d = c.currentDir + RootDir + d
+		}
+		d, f = c.extractPathElements(d)
 		d = Path.Join(d, f)
 	}
 
@@ -201,14 +211,21 @@ func (c *Client) toAbsolutePath (d string) string {
 }
 
 /* Changes the current working directory on the host */
-func (c *Client) ChangeDir(path string) (bool, error) {
+func (c *Client) ChangeDir(path string) (ok bool, err error) {
 	var dir string
 	dir = c.toAbsolutePath(path)
-	ok, err := c.Commands.CWD(dir)
 
-	if ok {
-		/* Keep track of the current working directory */
-		c.currentDir = dir
+	if dir == c.currentDir {
+		ok = true
+	} else {
+		ok, err = c.Commands.CWD(dir)
+		if ok {
+			/* Keep track of the current working directory */
+			c.currentDir = dir
+
+			/* List the current dir */
+			c.List()
+		}
 	}
 
 	return ok, err
@@ -236,6 +253,43 @@ func (c *Client) CurrentDir() string {
 
 /* Download the specified file */
 func (c *Client) Download(fileName string) (ok bool, err error) {
+	var data []byte
+
+	if !c.InPassiveMode() {
+		_, err = c.PassiveMode()
+		defer c.RestoreConnections();
+	}
+
+	fileName = c.toAbsolutePath(fileName)
+	dir, file := c.extractPathElements(fileName)
+
+	if ok, err = c.ChangeDir(dir); ok {
+		if c.Resources.ContainsByName(file) {
+			r := c.Resources.GetContentByName(file)
+
+			if r != nil {
+				if r.IsFile() {
+					/* Download the specified file */
+					if r.CanBeRetrieved() {
+						if r.IsBinary() {
+							c.RepresentationType(ClientCommands.TYPE_Image, nil)
+						} else {
+							c.RepresentationType(ClientCommands.TYPE_Ascii, ClientCommands.FMTCTRL_NonPrint)
+						}
+
+						data, err = c.Commands.RETR(file)
+						fmt.Println(string(data))
+					} else {
+						err = ERR_NonRetrievable
+					}
+				} else {
+					/* Download the entire directory */
+					// TODO:
+				}
+			}
+		}
+	}
+
 	return
 }
 
@@ -252,6 +306,19 @@ func (c *Client) Features() (feat *Features.Features, err error) {
 	}
 
 	return
+}
+
+/* Gives the ability to modify the currently used file structure (STRU) */
+func (c *Client) FileStructure(fileStructure string) (ok bool, err error) {
+	if c.settings.Get(OPT_FileStructure).Is(fileStructure) {
+		return true, nil
+	}
+
+	ok, err = c.Commands.STRU(fileStructure)
+	if err == nil {
+		c.settings.Get(OPT_FileStructure).Set(fileStructure)
+	}
+	return ok, err
 }
 
 /* Checks if the client is in any of the supported passive modes */
@@ -281,8 +348,10 @@ func (c *Client) ListFile(fileAndPath string) (*Resources.Resource, error) {
 
 /* Uses one of the supported features to list a container's resources or the named resource's facts */
 func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err error) {
+	var executed bool
 	if !c.InPassiveMode() {
 		_, err = c.PassiveMode()
+		defer c.RestoreConnections();
 	}
 
 	if err == nil {
@@ -290,16 +359,32 @@ func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err er
 			/* Container listing */
 			if c.features.Supports("MLSD") {
 				res, err = c.Commands.MLSD(path)
-			} else if c.features.Supports("LIST") {
+				executed = true
+			}
+
+			if executed && err != nil {
+				/* MLSD not supported, remove the feature from expected support and fallback on LIST */
+				c.features.RemoveFeature("MLSD")
+				executed = false
+			}
+
+			if !executed && c.features.Supports("LIST") {
 				res, err = c.Commands.LIST(path)
 			}
 		} else {
 			/* Single resource listing */
 			if c.features.Supports("MLST") {
 				res, err = c.Commands.MLST(path)
-//			} else if c.features.Supports("STAT") {
-//				res, err = c.Commands.STAT(path)
-			} else if c.features.Supports("LIST") {
+				executed = true
+			}
+
+			/* MLST not supported, remove the feature from expected support and fallback on LIST */
+			if executed && err != nil {
+				c.features.RemoveFeature("MLST")
+				executed = false
+			}
+
+			if c.features.Supports("LIST") {
 				res, err = c.Commands.LIST(path)
 			}
 		}
@@ -353,7 +438,66 @@ func (c *Client) passiveMode(epsv bool) (ok bool, err error) {
 	return
 }
 
+/* Impose the specified representation type to the server */
+func (c *Client) RepresentationType(representationType string, typeParameter interface {}) (bool, error) {
+	/* Do not request the server if neither the representation, nor the format changed */
+	if c.settings.Get(OPT_DataType).Is(representationType) {
+		if representationType == ClientCommands.TYPE_Ascii {
+			if c.settings.Get(OPT_FormatControl).Is(typeParameter) {
+				return true, nil
+			}
+		} else if representationType == ClientCommands.TYPE_LocalByte {
+			if c.settings.Get(OPT_ByteSize).Is(typeParameter) {
+				return true, nil
+			}
+		} else {
+			/* Still I type. */
+			return true, nil
+		}
+	}
+
+	ok, err := c.Commands.TYPE(representationType, typeParameter)
+
+	if ok {
+		if representationType == ClientCommands.TYPE_Ascii {
+			c.settings.Get(OPT_DataType).Set(representationType)
+			c.settings.Get(OPT_FormatControl).Set(typeParameter.(string))
+			c.settings.Get(OPT_ByteSize).Reset()
+		} else if representationType == ClientCommands.TYPE_LocalByte {
+			c.settings.Get(OPT_ByteSize).Set(typeParameter)
+			c.settings.Get(OPT_DataType).Reset()
+			c.settings.Get(OPT_FormatControl).Reset()
+		} else {
+			c.settings.Get(OPT_ByteSize).Reset()
+			c.settings.Get(OPT_DataType).Reset()
+			c.settings.Get(OPT_FormatControl).Reset()
+		}
+	}
+
+	return ok, err
+}
+
+/* Restores the client connection settings to the defaults */
+func (c *Client) RestoreConnections() {
+	c.settings.Get(OPT_ExtendedPassive).Reset()
+	c.settings.Get(OPT_PassiveMode).Reset()
+}
+
 /* Gets the system type */
 func (c *Client) System() (string, error) {
 	return c.Commands.SYST()
+}
+
+/* Gives the ability to define the desired data transfer mode */
+func (c *Client) TransferMode(mode string) (bool, error) {
+	if c.settings.Get(OPT_TransferMode).Is(mode) {
+		return true, nil
+	}
+
+	ok, err := c.Commands.MODE(mode)
+	if ok {
+		c.settings.Get(OPT_TransferMode).Set(mode)
+	}
+
+	return ok, err
 }

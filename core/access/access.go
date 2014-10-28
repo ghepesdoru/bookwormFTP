@@ -50,3 +50,14 @@ func FromPermString(p []byte) *AccessRights {
 
 	return NewAccessRights(perm)
 }
+
+/* Checks if the current AccessRights contain the specified permission */
+func (a *AccessRights) Contains (perm Perm) bool {
+	for _, p := range a.perm {
+		if p == perm {
+			return true
+		}
+	}
+
+	return false
+}
