@@ -1,13 +1,14 @@
 package client
 
 import(
-	"fmt"
+//	"fmt"
 	Address 		"github.com/ghepesdoru/bookwormFTP/core/addr"
 	ClientCommands 	"github.com/ghepesdoru/bookwormFTP/client/commands"
 	Credentials 	"github.com/ghepesdoru/bookwormFTP/core/credentials"
-	FeaturesParser 	"github.com/ghepesdoru/bookwormFTP/core/parsers/features"
+	Features 		"github.com/ghepesdoru/bookwormFTP/core/parsers/features"
 	Logger			"github.com/ghepesdoru/bookwormFTP/core/logger"
 	Path			"path"
+	Resources 		"github.com/ghepesdoru/bookwormFTP/core/parsers/resource"
 	Requester 		"github.com/ghepesdoru/bookwormFTP/client/requester"
 	Settings 		"github.com/ghepesdoru/bookwormFTP/client/settings"
 	Status 			"github.com/ghepesdoru/bookwormFTP/core/codes"
@@ -20,6 +21,7 @@ const (
 
 	/* Connection option names */
 	OPT_DebugMode	 	= "debug"
+	OPT_System			= "system"
 	OPT_Disconnected 	= "disconnected"
 	OPT_LoggedIn		= "logged_in"
 	OPT_PassiveMode		= "passive"
@@ -42,11 +44,14 @@ type Client struct {
 	credentials *Credentials.Credentials
 	currentDir	string
 	settings 	*Settings.Settings
+	features	*Features.Features
+	Resources	*Resources.Resource
 }
 
 /* Instantiates a new client (IPv4 preferred), and takes all possible actions based on address url */
 func NewClient(address string) (client *Client, err error) {
-	var dir string
+	var dir, system string
+
 	client, err = newClient(address, Address.IPvAny)
 
 	if err != nil {
@@ -61,10 +66,14 @@ func NewClient(address string) (client *Client, err error) {
 	}
 
 	/* Get system type */
-	fmt.Println(client.System())
+	if system, err = client.System(); err == nil {
+		client.settings.Add(OPT_System, system)
+	}
 
-	/* Get supported features */
-	fmt.Println(client.Features())
+	/* Grab supported features list */
+	if _, err = client.Features(); err != nil {
+		return
+	}
 
 	/* Get the current directory */
 	dir, err = client.Commands.PWD()
@@ -79,10 +88,15 @@ func NewClient(address string) (client *Client, err error) {
 		_, err = client.ChangeDir(dir)
 	}
 
+	/* List the current directory */
+	if _, err = client.List(); err != nil {
+		return
+	}
+
 	return
 }
 
-/* Instantiates a new client and tarts downloading the specified resource */
+/* Instantiates a new client and tarts downloading the specified Resources */
 func NewDownload(address string) (client *Client, err error) {
 	client, err = NewClient(address)
 
@@ -152,7 +166,7 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_NonPrint),
 			Settings.NewOption(OPT_ByteSize, 8),
 			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_File),
-		)}
+		), nil, nil}
 
 		/* Enable debugging */
 		if client.settings.Get(OPT_DebugMode).Is(true) {
@@ -226,8 +240,18 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 }
 
 /* Extracts the server supported features map */
-func (c *Client) Features() (*FeaturesParser.Features, error) {
-	return c.Commands.FEAT()
+func (c *Client) Features() (feat *Features.Features, err error) {
+	if c.features == nil {
+		feat, err = c.Commands.FEAT()
+
+		if err == nil {
+			c.features = feat
+		}
+	} else {
+		feat = c.features
+	}
+
+	return
 }
 
 /* Checks if the client is in any of the supported passive modes */
@@ -241,34 +265,51 @@ func (c *Client) IsIPv4() bool {
 }
 
 /* Lists the contents of the current directory */
-func (c *Client) ListCurrentDir() (string, error) {
-	return c.List(EmptyString)
+func (c *Client) List() (*Resources.Resource, error) {
+	return c.ListDir(c.currentDir)
 }
 
 /* Lists the contents of the specified directory */
-func (c *Client) List(dir string) (list string, err error) {
-	var rawList []byte
+func (c *Client) ListDir(dir string) (*Resources.Resource, error) {
+	return c.list(c.toAbsolutePath(dir), false)
+}
 
-	if len(dir) == 0 {
-		/* Fallback on current directory */
-		dir = c.currentDir
-	} else {
-		dir = c.toAbsolutePath(dir)
-	}
+/* Lists the specified file properties */
+func (c *Client) ListFile(fileAndPath string) (*Resources.Resource, error) {
+	return c.list(c.toAbsolutePath(fileAndPath), true)
+}
 
+/* Uses one of the supported features to list a container's resources or the named resource's facts */
+func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err error) {
 	if !c.InPassiveMode() {
 		_, err = c.PassiveMode()
 	}
 
 	if err == nil {
-		rawList, err = c.Commands.LIST(dir)
-
-		if err == nil {
-			list = string(rawList)
+		if !isFile {
+			/* Container listing */
+			if c.features.Supports("MLSD") {
+				res, err = c.Commands.MLSD(path)
+			} else if c.features.Supports("LIST") {
+				res, err = c.Commands.LIST(path)
+			}
+		} else {
+			/* Single resource listing */
+			if c.features.Supports("MLST") {
+				res, err = c.Commands.MLST(path)
+//			} else if c.features.Supports("STAT") {
+//				res, err = c.Commands.STAT(path)
+			} else if c.features.Supports("LIST") {
+				res, err = c.Commands.LIST(path)
+			}
 		}
 	}
 
-	return list, err
+	if err == nil {
+		c.Resources = res
+	}
+
+	return
 }
 
 /* Log's in with client registered credentials (USER, PASS sequence) */
@@ -281,51 +322,9 @@ func (c *Client) LogIn(credentials *Credentials.Credentials) (bool, error) {
 	return command.Success(), command.LastError()
 }
 
-/* List's the contents of the current directory in a parsable manner */
-func (c *Client) MachineList(dir string) (l string, err error) {
-	if len(dir) == 0 {
-		/* Fallback on current directory */
-		dir = c.currentDir
-	} else {
-		dir = c.toAbsolutePath(dir)
-	}
-
-	if !c.InPassiveMode() {
-		_, err = c.PassiveMode()
-	}
-
-	if err != nil {
-		return EmptyString, err
-	}
-
-	list, err := c.Commands.MLSD(dir)
-	return string(list), err
-}
-
-/* List information about the specified file */
-func (c *Client) MachineListFile(file string) (p string, err error) {
-	if len(file) == 0 {
-		/* Fallback on current directory */
-		return EmptyString, ClientCommands.ERR_InvalidFileName
-	} else {
-		file = c.toAbsolutePath(file)
-	}
-
-	if !c.InPassiveMode() {
-		_, err = c.PassiveMode()
-	}
-
-	if err != nil {
-		return EmptyString, err
-	}
-
-	list, err := c.Commands.MLST(file)
-	return string(list), err
-}
-
 /* Puts the client in passive mode, and makes the client ready for accessing the data connection */
 func (c *Client) PassiveMode() (bool, error) {
-	return c.passiveMode(!c.IsIPv4())
+	return c.passiveMode(!c.IsIPv4() || c.features.Supports("EPSV"))
 }
 
 /* Puts the client in passive mode, forces usage of EPSV command */

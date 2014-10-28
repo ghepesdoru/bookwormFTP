@@ -33,6 +33,11 @@ func NewAccessRights(perm []Perm) *AccessRights {
 	return &AccessRights{perm}
 }
 
+/* Instantiates a new empty AccessRights */
+func NewEmptyAccessRights() *AccessRights {
+	return &AccessRights{[]Perm{}}
+}
+
 /* Create a new AccessRights instance from a perm input */
 func FromPermString(p []byte) *AccessRights {
 	var perm []Perm

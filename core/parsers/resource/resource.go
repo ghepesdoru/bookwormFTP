@@ -28,10 +28,12 @@ const (
 const (
 	Comma = 59
 	Equal = 61
+	EmptyString = ""
+	DateFormat = "Jan 2 2008"
 )
 
 var (
-	ExtractListParts = regexp.MustCompilePOSIX(`(^[ldrwx-]*)(?: *)([[:digit:]]*)(?: *)([[:alpha:]]*)(?: *)([[:alpha:]]*)(?: *)([0-9]*)(?: *)([A-Za-z]*.[0-9]*(?: *)[0-9]*)(?: *)([A-Za-z*_.-]+)*(?:.*)`)
+	ExtractListParts = regexp.MustCompile(`(?:^[ldrwx-]*[[:blank:]]*[[:digit:]]*[[:blank:]]*[[:alpha:]]*[[:blank:]]*[[:alpha:]]*[[:blank:]]*)([0-9]*)(?: *)([A-Za-z]*.[0-9]*(?: *)[0-9]*)(?: *)([A-Za-z*_.-]+)*(?:.*)`)
 	UnknownTime = time.Unix(0, 0)
 	StringToTYPEMap = map[string]ResourceType {
 		"file": TYPE_File,	"dir": TYPE_Dir,	"cdir": TYPE_CDir,	"pdir": TYPE_PDir,
@@ -98,8 +100,46 @@ func FromMLSxList(list []byte) (res *Resource, err error) {
 }
 
 /* Extracts the resource from a List formatted list */
-func FromListList(list []byte) (res *Resource, err error) {
-	fmt.Println(ExtractListParts.FindAll(list, -1))
+func FromList(list []byte) (res *Resource, err error) {
+	var lines [][]byte
+	var r *Resource
+	var length, size int
+	var name string
+	var modified time.Time
+	var resType ResourceType = TYPE_Other
+	var mime MIMEType = MIME_Unknown
+
+	/* Define a virtual container for resource functionality uniformity. */
+	res = &Resource{".", size, &UnknownTime, &UnknownTime, TYPE_Dir, EmptyString, Access.NewEmptyAccessRights(), EmptyString, mime, EmptyString, nil, nil}
+	lines = BaseParser.SplitLines(list)
+	for _, l := range lines {
+		/* Extract current line's content */
+		parts := ExtractListParts.FindAllSubmatch(l, -1)
+		for _, matches := range parts {
+			length = len(matches)
+
+			if length == 4 {
+				size = BaseParser.ToInt(matches[1])
+				modified, err = time.Parse(DateFormat, string(matches[2]))
+				name = string(matches[3])
+
+				if nil == err {
+					/* Extract mime type and normalize resource type using available information */
+					mime = determineMIME(name)
+
+					if mime != MIME_Unknown {
+						resType = TYPE_File
+					} else {
+						resType = TYPE_Dir
+					}
+
+					r = &Resource{name, size, &modified, &UnknownTime, resType, EmptyString, Access.NewEmptyAccessRights(), EmptyString, mime, EmptyString, nil, nil}
+					res.Content = append(res.Content, r)
+				}
+			}
+		}
+	}
+
 	return
 }
 

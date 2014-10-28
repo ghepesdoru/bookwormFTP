@@ -285,8 +285,15 @@ func (c *Commands) LANG(lang string) (bool, error) {
 	return c.simpleControlCommand("lang", lang, Status.PositiveCompletion)
 }
 
-func (c *Commands) LIST(path string) ([]byte, error) {
-	return c.simpleDataCommand("list", path, Status.DataConnectionClose)
+func (c *Commands) LIST(path string) (*ResourceParser.Resource, error) {
+	var res *ResourceParser.Resource
+
+	data, err := c.simpleDataCommand("list", path, Status.DataConnectionClose)
+	if err == nil {
+		res, err = ResourceParser.FromList(data)
+	}
+
+	return res, err
 }
 
 func (c *Commands) MDTM(path string) (t *time.Time, err error) {
@@ -308,20 +315,28 @@ func (c *Commands) MKD(dir string) (bool, error) {
 	return c.simpleControlCommand("mkd", dir, Status.Pathname)
 }
 
-func (c *Commands) MLSD(dir string) ([]byte, error) {
-	data, err := c.simpleDataCommand("mlsd", dir, Status.DataConnectionClose)
-	res, err := ResourceParser.FromMLSxList(data)
-	fmt.Println(res)
-
-	return data, err
-}
-
-func (c *Commands) MLST(file string) ([]byte, error) {
-	if len(file) == 0 {
-		return []byte{}, ERR_InvalidFileName
+func (c *Commands) MLSD(dir string) (res *ResourceParser.Resource, err error) {
+	var data []byte
+	data, err = c.simpleDataCommand("mlsd", dir, Status.DataConnectionClose)
+	if err == nil {
+		res, err = ResourceParser.FromMLSxList(data)
 	}
 
-	return c.simpleDataCommand("mlst", file, Status.FileActionOk)
+	return
+}
+
+func (c *Commands) MLST(file string) (res *ResourceParser.Resource, err error) {
+	var data []byte
+	if len(file) == 0 {
+		return res, ERR_InvalidFileName
+	}
+
+	data, err = c.simpleDataCommand("mlst", file, Status.FileActionOk)
+	if err == nil {
+		res, err = ResourceParser.FromMLSxList(data)
+	}
+
+	return
 }
 
 func (c *Commands) MODE(mode string) (bool, error) {
