@@ -70,7 +70,8 @@ func TestRead(t *testing.T) {
 		testGlobals.pipeWrite.Write([]byte{'a'})
 	}()
 
-	data := testGlobals.reader.Read()
+	testGlobals.reader.Reset()
+	data := testGlobals.reader.Get()
 
 	if len(data) == 0 {
 		t.Fatal("No data read from pipe")
