@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"fmt"
 	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
 	BaseParser "github.com/ghepesdoru/bookwormFTP/core/parsers/base"
@@ -9,6 +8,8 @@ import (
 	ResourceParser "github.com/ghepesdoru/bookwormFTP/core/parsers/resource"
 	Requester "github.com/ghepesdoru/bookwormFTP/client/requester"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
+	"fmt"
+	"io"
 	"strings"
 	"strconv"
 	"time"
@@ -187,6 +188,16 @@ func (c *Commands) simpleDataCommand(name string, param string, expected ...int)
 	}
 
 	command, data := c.requester.RequestData(Command.NewCommand(name, param, expected))
+	return data, command.LastError()
+}
+
+/* Implementation for all commands that require a large amount of data from the data connection */
+func (c *Commands) dataCommand(w io.Writer, name string, param string, expected ...int) ([]byte, error) {
+	if ok, err := c.IsReady(); !ok {
+		return []byte{}, err
+	}
+
+	command, data := c.requester.RequestDataPipe(Command.NewCommand(name, param, expected), w)
 	return data, command.LastError()
 }
 
@@ -446,8 +457,8 @@ func (c *Commands) REST_PLUS(marker string) (bool, error) {
 	return c.simpleControlCommand("rest+", marker, Status.FileActionPending)
 }
 
-func (c *Commands) RETR(path string) ([]byte, error) {
-	return c.simpleDataCommand("retr", path, Status.DataConnectionClose)
+func (c *Commands) RETR(path string, w io.Writer) ([]byte, error) {
+	return c.dataCommand(w, "retr", path, Status.DataConnectionClose)
 }
 
 func (c *Commands) RMD(path string) (bool, error) {

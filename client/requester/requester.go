@@ -1,7 +1,6 @@
 package requester
 
 import (
-	"fmt"
 	Command "github.com/ghepesdoru/bookwormFTP/client/command"
 	Address "github.com/ghepesdoru/bookwormFTP/core/addr"
 	Status "github.com/ghepesdoru/bookwormFTP/core/codes"
@@ -12,8 +11,10 @@ import (
 	Reader "github.com/ghepesdoru/bookwormFTP/core/reader"
 	Response "github.com/ghepesdoru/bookwormFTP/core/response"
 	Net "net"
-	"net/url"
 	Path "path"
+	"fmt"
+	"io"
+	"net/url"
 	"strconv"
 	"time"
 )
@@ -147,7 +148,12 @@ func (r *Requester) Request(command *Command.Command) *Command.Command {
 
 /* Make a data request to the server */
 func (r *Requester) RequestData(command *Command.Command) (*Command.Command, []byte) {
-	return r.executeDataCommand(command)
+	return r.executeDataCommand(command, nil)
+}
+
+/* Make a data request to the server and pipe all reads town to the specified writer */
+func (r *Requester) RequestDataPipe(command *Command.Command, w io.Writer) (*Command.Command, []byte) {
+	return r.executeDataCommand(command, w)
 }
 
 /* Make a sequence of requests */
@@ -377,7 +383,7 @@ func (r *Requester) request(command *Command.Command) (bool, error) {
 }
 
 /* Executes the specified command listening on the data connection. */
-func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Command, []byte) {
+func (r *Requester) executeDataCommand(command *Command.Command, w io.Writer) (*Command.Command, []byte) {
 	var err error
 	r.Logger.Information("Executing: " + command.String())
 
@@ -388,6 +394,12 @@ func (r *Requester) executeDataCommand(command *Command.Command) (*Command.Comma
 		command.AddError(err)
 		return command, []byte{}
 	}
+
+	/* If required, pipe the data connection readings to the specified writer  */
+	if w != nil {
+		r.dataReader.AttachDestination(w)
+	}
+
 	r.execute(command, false, true, CommandRetries)
 	_, data := r.closeDataChannel()
 

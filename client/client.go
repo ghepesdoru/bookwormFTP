@@ -6,6 +6,7 @@ import(
 	ClientCommands 	"github.com/ghepesdoru/bookwormFTP/client/commands"
 	Credentials 	"github.com/ghepesdoru/bookwormFTP/core/credentials"
 	Features 		"github.com/ghepesdoru/bookwormFTP/core/parsers/features"
+	FileManager		"github.com/ghepesdoru/bookwormFTP/core/fileManager"
 	Logger			"github.com/ghepesdoru/bookwormFTP/core/logger"
 	Path			"path"
 	Resources 		"github.com/ghepesdoru/bookwormFTP/core/parsers/resource"
@@ -49,6 +50,7 @@ type Client struct {
 	settings 	*Settings.Settings
 	features	*Features.Features
 	Resources	*Resources.Resource
+	localFM		*FileManager.FileManager
 }
 
 /* Instantiates a new client (IPv4 preferred), and takes all possible actions based on address url */
@@ -125,91 +127,6 @@ func NewIPv6(address string) (*Client, error) {
 	return newClient(address, Address.IPv6)
 }
 
-/* Instantiate a new client */
-func newClient(address string, ipFamily int) (client *Client, err error) {
-	var commands *ClientCommands.Commands
-	var credentials *Credentials.Credentials
-	var requester *Requester.Requester
-
-	/* Create a new client instance based on specified IP version */
-	if ipFamily != Address.IPvAny {
-		if ipFamily == Address.IPv4 {
-			requester, err = Requester.NewRequesterIPv4(address)
-		} else {
-			requester, err = Requester.NewRequesterIPv6(address)
-		}
-
-		if err != nil {
-			return
-		}
-
-		commands = ClientCommands.NewCommands()
-		_, err = commands.AttachRequester(requester)
-	} else {
-		commands, err = ClientCommands.NewCommandsProvider(address)
-		if err != nil {
-			return
-		}
-
-		requester = commands.Requester()
-		if requester == nil {
-			return
-		}
-	}
-
-	if nil == err {
-		credentials = requester.GetCredentials()
-		client = &Client{commands, requester, credentials, RootDir, Settings.NewSettings(
-			Settings.NewOption(OPT_DebugMode, true),
-			Settings.NewOption(OPT_LoggedIn, false),
-			Settings.NewOption(OPT_PassiveMode, false),
-			Settings.NewOption(OPT_ExtendedPassive, false),
-			Settings.NewOption(OPT_Account, EmptyString),
-			Settings.NewOption(OPT_AccountEnabled, false),
-			Settings.NewOption(OPT_TransferMode, ClientCommands.TRANSFER_Unspecified),
-			Settings.NewOption(OPT_DataType, ClientCommands.TYPE_Unspecified),
-			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_Unspecified),
-			Settings.NewOption(OPT_ByteSize, 8),
-			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_Unspecified),
-		), nil, nil}
-
-		/* Enable debugging */
-		if client.settings.Get(OPT_DebugMode).Is(true) {
-			requester.Logger = Logger.NewSimpleLogger()
-		}
-	}
-
-	return
-}
-
-/* Extracts the current path parts (directories and file) from the specified input */
-func (c *Client) extractPathElements(p string) (dir string, file string) {
-	p = Path.Clean(p)
-
-	if Path.Ext(p) == EmptyString && p != RootDir {
-		p = p + "/"
-	}
-
-	return Path.Split(p)
-}
-
-/* Given a relative path, will concatenate it with the current working directory and normalize it */
-func (c *Client) toAbsolutePath (d string) string {
-	var f string
-	if !Path.IsAbs(d) {
-		/* Not an absolute path, concatenate the relative path to the working directory, and normalize them together  */
-		if len(d) == 0 {
-			d = c.currentDir
-		} else {
-			d = c.currentDir + RootDir + d
-		}
-		d, f = c.extractPathElements(d)
-		d = Path.Join(d, f)
-	}
-
-	return d
-}
-
 /* Changes the current working directory on the host */
 func (c *Client) ChangeDir(path string) (ok bool, err error) {
 	var dir string
@@ -253,8 +170,6 @@ func (c *Client) CurrentDir() string {
 
 /* Download the specified file */
 func (c *Client) Download(fileName string) (ok bool, err error) {
-	var data []byte
-
 	if !c.InPassiveMode() {
 		_, err = c.PassiveMode()
 		defer c.RestoreConnections();
@@ -277,8 +192,14 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 							c.RepresentationType(ClientCommands.TYPE_Ascii, ClientCommands.FMTCTRL_NonPrint)
 						}
 
-						data, err = c.Commands.RETR(file)
-						fmt.Println(string(data))
+						if !c.localFM.ContainsFile(file) {
+							ok, err = c.localFM.CreateFile(file)
+						}
+
+						if err == nil {
+							_, err = c.localFM.Select(file)
+							_, err = c.Commands.RETR(file, c.localFM.GetSelection())
+						}
 					} else {
 						err = ERR_NonRetrievable
 					}
@@ -417,27 +338,6 @@ func (c *Client) PassiveModeEPSV() (bool, error) {
 	return c.passiveMode(true)
 }
 
-/* Activates the passive mode if possible, and marks the internal options */
-func (c *Client) passiveMode(epsv bool) (ok bool, err error) {
-	if epsv {
-		ok, err = c.Commands.EPSV()
-
-		if ok {
-			c.settings.Get(OPT_ExtendedPassive).Set(true)
-			c.settings.Get(OPT_PassiveMode).Reset()
-		}
-	} else {
-		ok, err = c.Commands.PASV()
-
-		if ok {
-			c.settings.Get(OPT_PassiveMode).Set(true)
-			c.settings.Get(OPT_ExtendedPassive).Reset()
-		}
-	}
-
-	return
-}
-
 /* Impose the specified representation type to the server */
 func (c *Client) RepresentationType(representationType string, typeParameter interface {}) (bool, error) {
 	/* Do not request the server if neither the representation, nor the format changed */
@@ -500,4 +400,113 @@ func (c *Client) TransferMode(mode string) (bool, error) {
 	}
 
 	return ok, err
+}
+
+/* Instantiate a new client */
+func newClient(address string, ipFamily int) (client *Client, err error) {
+	var commands *ClientCommands.Commands
+	var credentials *Credentials.Credentials
+	var requester *Requester.Requester
+
+	/* Create a new client instance based on specified IP version */
+	if ipFamily != Address.IPvAny {
+		if ipFamily == Address.IPv4 {
+			requester, err = Requester.NewRequesterIPv4(address)
+		} else {
+			requester, err = Requester.NewRequesterIPv6(address)
+		}
+
+		if err != nil {
+			return
+		}
+
+		commands = ClientCommands.NewCommands()
+		_, err = commands.AttachRequester(requester)
+	} else {
+		commands, err = ClientCommands.NewCommandsProvider(address)
+		if err != nil {
+			return
+		}
+
+		requester = commands.Requester()
+		if requester == nil {
+			return
+		}
+	}
+
+	if nil == err {
+		credentials = requester.GetCredentials()
+		client = &Client{commands, requester, credentials, RootDir, Settings.NewSettings(
+			Settings.NewOption(OPT_DebugMode, true),
+			Settings.NewOption(OPT_LoggedIn, false),
+			Settings.NewOption(OPT_PassiveMode, false),
+			Settings.NewOption(OPT_ExtendedPassive, false),
+			Settings.NewOption(OPT_Account, EmptyString),
+			Settings.NewOption(OPT_AccountEnabled, false),
+			Settings.NewOption(OPT_TransferMode, ClientCommands.TRANSFER_Unspecified),
+			Settings.NewOption(OPT_DataType, ClientCommands.TYPE_Unspecified),
+			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_Unspecified),
+			Settings.NewOption(OPT_ByteSize, 8),
+			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_Unspecified),
+		), nil, nil, nil}
+
+		/* Initialize a local file manager based on the client current working dir (localy) */
+		client.localFM, err = FileManager.NewFileManager()
+
+		/* Enable debugging */
+		if client.settings.Get(OPT_DebugMode).Is(true) {
+			requester.Logger = Logger.NewSimpleLogger()
+		}
+	}
+
+	return
+}
+
+/* Extracts the current path parts (directories and file) from the specified input */
+func (c *Client) extractPathElements(p string) (dir string, file string) {
+	p = Path.Clean(p)
+
+	if Path.Ext(p) == EmptyString && p != RootDir {
+		p = p + "/"
+	}
+
+	return Path.Split(p)
+}
+
+/* Given a relative path, will concatenate it with the current working directory and normalize it */
+func (c *Client) toAbsolutePath (d string) string {
+	var f string
+	if !Path.IsAbs(d) {
+		/* Not an absolute path, concatenate the relative path to the working directory, and normalize them together  */
+		if len(d) == 0 {
+			d = c.currentDir
+		} else {
+			d = c.currentDir + RootDir + d
+		}
+		d, f = c.extractPathElements(d)
+		d = Path.Join(d, f)
+	}
+
+	return d
+}
+
+/* Activates the passive mode if possible, and marks the internal options */
+func (c *Client) passiveMode(epsv bool) (ok bool, err error) {
+	if epsv {
+		ok, err = c.Commands.EPSV()
+
+		if ok {
+			c.settings.Get(OPT_ExtendedPassive).Set(true)
+			c.settings.Get(OPT_PassiveMode).Reset()
+		}
+	} else {
+		ok, err = c.Commands.PASV()
+
+		if ok {
+			c.settings.Get(OPT_PassiveMode).Set(true)
+			c.settings.Get(OPT_ExtendedPassive).Reset()
+		}
+	}
+
+	return
 }
