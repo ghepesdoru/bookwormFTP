@@ -197,8 +197,8 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 						}
 
 						if err == nil {
-							_, err = c.localFM.Select(file)
-							_, err = c.Commands.RETR(file, c.localFM.GetSelectionWriter())
+							_, err = c.localFM.SelectForWriteNew(file)
+							_, err = c.Commands.RETR(file, c.localFM.GetSelection())
 							c.localFM.SelectionClear()
 						}
 					} else {

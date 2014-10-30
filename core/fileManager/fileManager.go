@@ -4,11 +4,40 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
+)
+
+/* Definition of selection type */
+type selectionType struct {
+	open_flag		int
+	permissions		os.FileMode
+}
+
+type selection int
+
+const (
+	/* Selection types naming constants */
+	SELECT_ReadOnly	selection = iota
+	SELECT_WriteOnly
+	SELECT_ReadWrite
+	SELECT_Append
+	SELECT_Truncate
+	SELECT_CreateNew
 )
 
 var (
 	ERR_InvalidPath 			= fmt.Errorf("Invalid root directory path. Please consider using an absolute path.")
 	ERR_InvalidSelection 		= fmt.Errorf("Invalid directory selection. Please consider selecting a file.")
+
+	/* Selection types definitions */
+	SelectionTypes				= map[selection]selectionType {
+		SELECT_ReadOnly:		selectionType{os.O_RDONLY,	os.ModePerm},
+		SELECT_WriteOnly:		selectionType{os.O_WRONLY, 	os.ModePerm},
+		SELECT_ReadWrite:		selectionType{os.O_RDWR, 	os.ModePerm},
+		SELECT_Append:			selectionType{os.O_APPEND,	os.ModePerm},
+		SELECT_Truncate:		selectionType{os.O_TRUNC,	os.ModePerm},
+		SELECT_CreateNew:		selectionType{os.O_WRONLY,	os.ModePerm},
+	}
 )
 
 /* Define the FileManager type */
@@ -107,7 +136,7 @@ func (fm *FileManager) CreateFile(fileName string) (ok bool, err error) {
 }
 
 /* Get the file currently in focus */
-func (fm *FileManager) GetSelectionWriter() *os.File {
+func (fm *FileManager) GetSelection() *os.File {
 	if fm.focus != nil {
 		return fm.focus
 	}
@@ -122,15 +151,23 @@ func (fm *FileManager) MakeDir(dir string) (ok bool, err error) {
 }
 
 /* File structure getter, can be used in cases where a reader/writer is required */
-func (fm *FileManager) Select(fileName string) (f *os.File, err error) {
+func (fm *FileManager) Select(fileName string, se selection) (f *os.File, err error) {
+	return fm._select(fileName, se, 0)
+}
+
+/* File structure getter with support for incremental file name creation. */
+func (fm *FileManager) _select(fileName string, se selection, increment int) (f *os.File, err error) {
 	var s os.FileInfo
+	var selection selectionType
+	selection, _ = SelectionTypes[se]
 
 	if fm.focus != nil {
 		err = fm.SelectionClear()
 	}
 
+	// TODO: Repair the incremental file name generation (fails on file detection).
 	if err == nil && fm.ContainsFile(fileName) {
-		f, err = os.OpenFile(fileName, os.O_RDWR, os.ModePerm)
+		f, err = os.OpenFile(fileName, selection.open_flag, selection.permissions)
 
 		if err == nil {
 			s, err = f.Stat()
@@ -141,9 +178,45 @@ func (fm *FileManager) Select(fileName string) (f *os.File, err error) {
 				err = ERR_InvalidSelection
 			}
 		}
+	} else if se == SELECT_CreateNew {
+		ext := path.Ext(fileName)
+		l := len(fileName)
+		fileName = fileName[:l - len(ext)] + strconv.Itoa(increment) + ext
+		fmt.Println(fileName)
+		return fm._select(fileName, se, increment + 1)
 	}
 
 	return
+}
+
+/* Specialized selection: Reading only */
+func (fm *FileManager) SelectForRead(fileName string) (f *os.File, err error) {
+	return fm.Select(fileName, SELECT_ReadOnly)
+}
+
+/* Specialized selection: Reading and writing */
+func (fm *FileManager) SelectForReadWrite(fileName string) (f *os.File, err error) {
+	return fm.Select(fileName, SELECT_ReadWrite)
+}
+
+/* Specialized selection: Write only */
+func (fm *FileManager) SelectForWrite(fileName string) (f *os.File, err error) {
+	return fm.Select(fileName, SELECT_WriteOnly)
+}
+
+/* Specialized selection: Write after truncate */
+func (fm *FileManager) SelectForWriteTruncate(fileName string) (f *os.File, err error) {
+	return fm.Select(fileName, SELECT_Truncate)
+}
+
+/* Specialized selection: Write after creating a new unique file */
+func (fm *FileManager) SelectForWriteNew(fileName string) (f *os.File, err error) {
+	return fm.Select(fileName, SELECT_CreateNew)
+}
+
+/* Specialized selection: Reading only */
+func (fm *FileManager) SelectForAppend(fileName string) (f *os.File, err error) {
+	return fm.Select(fileName, SELECT_Append)
 }
 
 /* Closes the currently opened file. */

@@ -232,7 +232,7 @@ func (r *Reader) listen() {
 			n, err = r.Write(data[:n])
 
 			if r.outsource {
-				fmt.Println("Read: ", r.nRBytes, "Wrote: ", r.nWBytes)
+//				fmt.Println("Read: ", r.nRBytes, "Wrote: ", r.nWBytes)
 			}
 		}
 	}
