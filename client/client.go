@@ -198,7 +198,8 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 
 						if err == nil {
 							_, err = c.localFM.Select(file)
-							_, err = c.Commands.RETR(file, c.localFM.GetSelection())
+							_, err = c.Commands.RETR(file, c.localFM.GetSelectionWriter())
+							c.localFM.SelectionClear()
 						}
 					} else {
 						err = ERR_NonRetrievable

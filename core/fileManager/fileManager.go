@@ -32,7 +32,6 @@ func NewFileManager() (*FileManager, error) {
 func NewFileManagerAt(rootDir string) (fm *FileManager, err error) {
 	fm = &FileManager{nil, []os.FileInfo{}, nil}
 	_, err = fm.ChangeDir(rootDir)
-	fmt.Println("New file manager creaded", err)
 
 	return
 }
@@ -84,7 +83,7 @@ func (fm *FileManager) ContainsDir(dir string) bool {
 
 /* Checks the current directory listing for the specified file existence */
 func (fm *FileManager) ContainsFile(fileName string) bool {
-	return fm.contains(fileName, true)
+	return fm.contains(fileName, false)
 }
 
 /* Creates a new file */
@@ -108,7 +107,7 @@ func (fm *FileManager) CreateFile(fileName string) (ok bool, err error) {
 }
 
 /* Get the file currently in focus */
-func (fm *FileManager) GetSelection() *os.File {
+func (fm *FileManager) GetSelectionWriter() *os.File {
 	if fm.focus != nil {
 		return fm.focus
 	}
@@ -131,7 +130,7 @@ func (fm *FileManager) Select(fileName string) (f *os.File, err error) {
 	}
 
 	if err == nil && fm.ContainsFile(fileName) {
-		f, err = os.Open(fileName)
+		f, err = os.OpenFile(fileName, os.O_RDWR, os.ModePerm)
 
 		if err == nil {
 			s, err = f.Stat()

@@ -1,8 +1,10 @@
 package reader
 
 import (
+	"fmt"
 	"io"
 	"bytes"
+	"bufio"
 	"time"
 )
 
@@ -34,8 +36,10 @@ var (
 /* Bookworm FTP reader */
 type Reader struct {
 	source		io.Reader
-	destination	io.Writer
+	destination	*bufio.Writer
 	buffer		*bytes.Buffer
+	nRBytes		int
+	nWBytes		int
 	err			error
 	status		SIG_Status
 	sourceOk	bool
@@ -45,14 +49,14 @@ type Reader struct {
 
 /* Instantiate a new Reader */
 func NewReader(source io.Reader) (reader *Reader) {
-	destination := bytes.NewBuffer([]byte{})
-	reader = &Reader{source, nil, destination, nil, SIG_Done, true, false, false}
+	destination := new(bytes.Buffer)
+	reader = &Reader{source, nil, destination, 0, 0, nil, SIG_Done, true, false, false}
 	reader.attachDestination(destination)
 	return
 }
 
 /* Attach a destination writer to the current reader */
-func (r *Reader) AttachDestination(w io.Writer) {
+func (r *Reader) AttachDestination(w interface{}) {
 	r.attachDestination(w)
 	r.outsource = true
 }
@@ -118,6 +122,8 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 
 		r.err = err
 		r.StopReading()
+	} else {
+		r.nRBytes += n
 	}
 
 	return
@@ -128,6 +134,9 @@ func (r *Reader) Reset() {
 	if !r.outsource {
 		r.buffer.Reset()
 	}
+
+	r.nRBytes = 0
+	r.nWBytes = 0
 }
 
 /* Returns a human readable description of the current reader's status */
@@ -155,20 +164,30 @@ func (r *Reader) Write(p []byte) (n int, err error) {
 	if err != nil {
 		r.err = err
 		r.StopReading()
+	} else {
+		err = r.destination.Flush()
+
+		if err == nil {
+			r.nWBytes += n
+		} else {
+			r.err = err
+			r.StopReading()
+			fmt.Println("Could not flush due to: ", err)
+		}
 	}
 
 	return
 }
 
 /* Attach a new destination io.Writer to the current infinite reading process */
-func (r *Reader) attachDestination(w io.Writer) {
+func (r *Reader) attachDestination(w interface{}) {
 	/* Stop reading if active */
 	if r.IsActive() {
 		r.StopReading()
 	}
 
 	/* Start listening for content */
-	r.destination = w
+	r.destination = bufio.NewWriter(w.(io.Writer))
 	go r.listen()
 	time.Sleep(DELAY_WAIT_FOR_READ)
 }
@@ -211,6 +230,10 @@ func (r *Reader) listen() {
 		if n, err = r.Read(data); err == nil {
 			r.status = SIG_DataRead
 			n, err = r.Write(data[:n])
+
+			if r.outsource {
+				fmt.Println("Read: ", r.nRBytes, "Wrote: ", r.nWBytes)
+			}
 		}
 	}
 }
