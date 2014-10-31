@@ -20,7 +20,7 @@ var (
 	Numbers map[byte]int = map[byte]int {48: 0, 49: 1, 50: 2, 51: 3, 52: 4, 53: 5, 54: 6, 55: 7, 56: 8, 57: 9}
 
 	/* Translation map from int to time.Month */
-	IntToMonth = map[int]time.Month{
+	IntToMonth = map[int]time.Month {
 		1:  time.January,
 		2:  time.February,
 		3:  time.March,
@@ -33,6 +33,21 @@ var (
 		10: time.October,
 		11: time.November,
 		12: time.December,
+	}
+
+	MonthToInt = map[time.Month]int {
+		time.January:	1,
+		time.February:	2,
+		time.March:		3,
+		time.April:		4,
+		time.May:		5,
+		time.June:		6,
+		time.July:		7,
+		time.August:	8,
+		time.September:	9,
+		time.October:	10,
+		time.November:	11,
+		time.December:	12,
 	}
 
 	ERR_InvalidTimeVal = fmt.Errorf("Invalid time-val representation.")
@@ -182,3 +197,7 @@ func ParseTimeVal(timeVal []byte) (t *time.Time, err error) {
 	return &aux, err
 }
 
+/* Generates a new TimeVal (ex: 20141030191749) from the specified Time */
+func ToTimeVal(t time.Time) string {
+	return fmt.Sprintf("%4d%2d%2d%2d%2d%2d", t.Year(), MonthToInt[t.Month()], t.Day(), t.Hour(), t.Minute(), t.Second())
+}

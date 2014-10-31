@@ -339,6 +339,11 @@ func (r *Resource) IsBinary() bool {
 	return r.MIME == MIME_Binary
 }
 
+/* Checks if the current resource represents the child of a parent resource (excludes self and parent dir) */
+func (r *Resource) IsChild() bool {
+	return r.Type == TYPE_Dir || r.Type == TYPE_File || r.Type == TYPE_Other
+}
+
 /* Checks if the current resource is the current container directory */
 func (r *Resource) IsCurrentDir() bool {
 	return r.Type == TYPE_CDir

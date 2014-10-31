@@ -35,6 +35,14 @@ const (
 	OPT_FormatControl	= "format_control"
 	OPT_ByteSize		= "byte_size"
 	OPT_FileStructure	= "file_structure"
+	OPT_DownloadOverlap	= "download_overlap"
+)
+
+type DownloadOverlapAction string
+const (
+	DO_OverWrite		DownloadOverlapAction = "overwrite"
+	DO_CreateNew		DownloadOverlapAction = "create_new"
+	DO_IgnoreExisting	DownloadOverlapAction = "ignore_existing"
 )
 
 var (
@@ -111,7 +119,10 @@ func NewDownload(address string) (client *Client, err error) {
 		return
 	}
 
-	/* Download the specified file */
+	/* Impose incremental creation of copies for existing files by default */
+	client.SetDownloadRuleCreateCopy()
+
+	/* Download the specified file or directory */
 	_, file := client.requester.GetInitialPath()
 	_, err = client.Download(file)
 	return
@@ -179,35 +190,73 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 	dir, file := c.extractPathElements(fileName)
 
 	if ok, err = c.ChangeDir(dir); ok {
-		if c.Resources.ContainsByName(file) {
-			r := c.Resources.GetContentByName(file)
+		/* Use the last subdirectory as container for the downloaded content */
+		if len(file) == 0 {
+			/* Download the entire current directory */
+			return c.downloadDir(Path.Base(dir), false)
+		} else {
+			if c.Resources.ContainsByName(file) {
+				r := c.Resources.GetContentByName(file)
 
-			if r != nil {
-				if r.IsFile() {
-					/* Download the specified file */
-					if r.CanBeRetrieved() {
-						if r.IsBinary() {
-							c.RepresentationType(ClientCommands.TYPE_Image, nil)
-						} else {
-							c.RepresentationType(ClientCommands.TYPE_Ascii, ClientCommands.FMTCTRL_NonPrint)
-						}
-
-						if !c.localFM.ContainsFile(file) {
-							ok, err = c.localFM.CreateFile(file)
-						}
-
-						if err == nil {
-							_, err = c.localFM.SelectForWriteNew(file)
-							_, err = c.Commands.RETR(file, c.localFM.GetSelection())
-							c.localFM.SelectionClear()
-						}
+				if r != nil {
+					if r.IsFile() {
+						/* Download the specified file */
+						return c.downloadFile(file)
 					} else {
-						err = ERR_NonRetrievable
+						/* Download the entire directory */
+						return c.downloadDir(file, true)
 					}
-				} else {
-					/* Download the entire directory */
-					// TODO:
 				}
+			}
+		}
+	}
+
+	return
+}
+
+/* Download a directory at a time */
+func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err error) {
+	if !c.localFM.ContainsDir(currentDir) {
+		/* Create a new directory */
+		if ok, err = c.localFM.MakeDir(currentDir); !ok {
+			err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", currentDir, err)
+			fmt.Println("Arg: ", currentDir)
+			fmt.Println(c.localFM.List())
+			return
+		}
+	}
+
+	/* Change to the existing directory */
+	if ok, err = c.localFM.ChangeDirRelative(currentDir); !ok {
+		fmt.Println(ok, err)
+		fmt.Println(c.localFM.List())
+		err = fmt.Errorf("Download error: Unable to change path to local directory %s", currentDir)
+		return
+	}
+
+	/* Change the remote host directory */
+	if changePath {
+		if ok, err = c.ChangeDir(currentDir); !ok {
+			return
+		}
+	}
+
+	if err == nil {
+		for _, f := range c.Resources.Content {
+			if !f.IsChild() {
+				continue
+			}
+
+			if f.IsDir() {
+				ok, err = c.downloadDir(f.Name, true)
+			} else {
+				/* File */
+				ok, err = c.downloadFile(f.Name)
+			}
+
+			if !ok {
+				err = fmt.Errorf("Download error: Unable to download remote resource %s. Original error: %s", f.Name, err)
+				return
 			}
 		}
 	}
@@ -384,6 +433,21 @@ func (c *Client) RestoreConnections() {
 	c.settings.Get(OPT_PassiveMode).Reset()
 }
 
+/* Makes the client ignore existing files with the same name */
+func (c *Client) SetDownloadRuleIgnore() {
+	c.settings.Get(OPT_DownloadOverlap).Reset()
+}
+
+/* Makes the client overwrite existing files with the same name */
+func (c *Client) SetDownloadRuleOverwrite() {
+	c.settings.Get(OPT_DownloadOverlap).Set(DO_OverWrite)
+}
+
+/* Makes the client create a new copy of the existing files with the same name */
+func (c *Client) SetDownloadRuleCreateCopy() {
+	c.settings.Get(OPT_DownloadOverlap).Set(DO_CreateNew)
+}
+
 /* Gets the system type */
 func (c *Client) System() (string, error) {
 	return c.Commands.SYST()
@@ -449,6 +513,7 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_Unspecified),
 			Settings.NewOption(OPT_ByteSize, 8),
 			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_Unspecified),
+			Settings.NewOption(OPT_DownloadOverlap, DO_IgnoreExisting),
 		), nil, nil, nil}
 
 		/* Initialize a local file manager based on the client current working dir (localy) */
@@ -458,6 +523,61 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 		if client.settings.Get(OPT_DebugMode).Is(true) {
 			requester.Logger = Logger.NewSimpleLogger()
 		}
+	}
+
+	return
+}
+
+/* Downloads the specified file */
+func (c *Client) downloadFile(file string) (ok bool, err error) {
+	downloadBehaviour := c.settings.Get(OPT_DownloadOverlap)
+	r := c.Resources.GetContentByName(file)
+
+	/* Download the specified file */
+	if r.CanBeRetrieved() {
+		if downloadBehaviour.Is(DO_CreateNew) {
+			_, err = c.localFM.SelectForWriteNew(file)
+		} else if downloadBehaviour.Is(DO_OverWrite) {
+			_, err = c.localFM.SelectForWriteTruncate(file)
+		} else {
+			/* Ignore the current file */
+			return true, err
+		}
+
+		if err != nil {
+			/* Unable to select the local resource */
+			err = fmt.Errorf("Download error: Unable to select local resource %s", r.Name)
+			return false, err
+		}
+
+		/* Put client in passive mode just before downloading */
+		if !c.InPassiveMode() {
+			_, err = c.PassiveMode()
+			defer c.RestoreConnections();
+		}
+
+		/* Set representation type */
+		if r.IsBinary() {
+			c.RepresentationType(ClientCommands.TYPE_Image, nil)
+		} else {
+			c.RepresentationType(ClientCommands.TYPE_Ascii, ClientCommands.FMTCTRL_NonPrint)
+		}
+
+		if _, err = c.Commands.RETR(file, c.localFM.GetSelection()); err != nil {
+			err = fmt.Errorf("Download error: Unable to RETR file %s. Original error: %s", r.Name, err)
+			return
+		}
+
+		if err = c.localFM.SelectionClear(); err != nil {
+			err = fmt.Errorf("Download error: Unable to close local resource %s", r.Name)
+			return
+		}
+	} else {
+		err = ERR_NonRetrievable
+	}
+
+	if err == nil {
+		ok = true
 	}
 
 	return
