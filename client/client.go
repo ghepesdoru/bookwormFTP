@@ -8,7 +8,7 @@ import(
 	Features 		"github.com/ghepesdoru/bookwormFTP/core/parsers/features"
 	FileManager		"github.com/ghepesdoru/bookwormFTP/core/fileManager"
 	Logger			"github.com/ghepesdoru/bookwormFTP/core/logger"
-	Path			"path"
+	PathManager 	"github.com/ghepesdoru/bookwormFTP/core/pathManager"
 	Resources 		"github.com/ghepesdoru/bookwormFTP/core/parsers/resource"
 	Requester 		"github.com/ghepesdoru/bookwormFTP/client/requester"
 	Settings 		"github.com/ghepesdoru/bookwormFTP/client/settings"
@@ -54,7 +54,7 @@ type Client struct {
 	Commands	*ClientCommands.Commands
 	requester	*Requester.Requester
 	credentials *Credentials.Credentials
-	currentDir	string
+	path		*PathManager.PathManager
 	settings 	*Settings.Settings
 	features	*Features.Features
 	Resources	*Resources.Resource
@@ -91,7 +91,7 @@ func NewClient(address string) (client *Client, err error) {
 	/* Get the current directory */
 	dir, err = client.Commands.PWD()
 	if err == nil {
-		client.currentDir = dir
+		client.path.ChangeCurrentDir(dir)
 	}
 
 	/* Check for initial path, and navigate there if available */
@@ -141,15 +141,15 @@ func NewIPv6(address string) (*Client, error) {
 /* Changes the current working directory on the host */
 func (c *Client) ChangeDir(path string) (ok bool, err error) {
 	var dir string
-	dir = c.toAbsolutePath(path)
+	dir = c.path.ToCurrentDir(path)
 
-	if dir == c.currentDir {
+	if dir == c.path.GetCurrentDir() {
 		ok = true
 	} else {
 		ok, err = c.Commands.CWD(dir)
 		if ok {
 			/* Keep track of the current working directory */
-			c.currentDir = dir
+			c.path.ChangeCurrentDir(dir)
 
 			/* List the current dir */
 			c.List()
@@ -161,14 +161,14 @@ func (c *Client) ChangeDir(path string) (ok bool, err error) {
 
 /* Changes the current working directory to it's container on the host */
 func (c *Client) ChangeToParentDir() (bool, error) {
-	if c.currentDir == RootDir {
+	if c.path.InRootDir() {
 		return true, nil
 	}
 
 	ok, err := c.Commands.CDUP()
 	if ok {
 		/* Keep track of the current working directory */
-		c.currentDir = Path.Dir(Path.Clean(c.currentDir))
+		c.path.ChangeCurrentDir("./../")
 	}
 
 	return ok, err
@@ -176,7 +176,7 @@ func (c *Client) ChangeToParentDir() (bool, error) {
 
 /* Get the current working directory on host */
 func (c *Client) CurrentDir() string {
-	return c.currentDir
+	return c.path.GetCurrentDir()
 }
 
 /* Download the specified file */
@@ -186,8 +186,9 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 		defer c.RestoreConnections();
 	}
 
-	fileName = c.toAbsolutePath(fileName)
-	dir, file := c.extractPathElements(fileName)
+	fileName = c.path.ToCurrentDir(fileName)
+	dir := c.path.SplitDir(fileName)
+	file := c.path.SplitFile(fileName)
 
 	fmt.Println(fmt.Sprintf("FileName: %s, dir: %s, file: %s", fileName, dir, file))
 
@@ -195,7 +196,7 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 		/* Use the last subdirectory as container for the downloaded content */
 		if len(file) == 0 {
 			/* Download the entire current directory */
-			return c.downloadDir(Path.Base(dir), false)
+			return c.downloadDir(c.path.SplitDir(dir), false)
 		} else {
 			if c.Resources.ContainsByName(file) {
 				r := c.Resources.GetContentByName(file)
@@ -310,17 +311,17 @@ func (c *Client) IsIPv4() bool {
 
 /* Lists the contents of the current directory */
 func (c *Client) List() (*Resources.Resource, error) {
-	return c.ListDir(c.currentDir)
+	return c.ListDir(c.path.GetCurrentDir())
 }
 
 /* Lists the contents of the specified directory */
 func (c *Client) ListDir(dir string) (*Resources.Resource, error) {
-	return c.list(c.toAbsolutePath(dir), false)
+	return c.list(c.path.ToCurrentDir(dir), false)
 }
 
 /* Lists the specified file properties */
 func (c *Client) ListFile(fileAndPath string) (*Resources.Resource, error) {
-	return c.list(c.toAbsolutePath(fileAndPath), true)
+	return c.list(c.path.ToCurrentDir(fileAndPath), true)
 }
 
 /* Uses one of the supported features to list a container's resources or the named resource's facts */
@@ -478,6 +479,7 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 	var commands *ClientCommands.Commands
 	var credentials *Credentials.Credentials
 	var requester *Requester.Requester
+	var pathManager *PathManager.PathManager
 
 	/* Create a new client instance based on specified IP version */
 	if ipFamily != Address.IPvAny {
@@ -507,7 +509,11 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 
 	if nil == err {
 		credentials = requester.GetCredentials()
-		client = &Client{commands, requester, credentials, RootDir, Settings.NewSettings(
+		if pathManager, err = PathManager.NewPathManagerAt(RootDir); err != nil {
+			return
+		}
+
+		client = &Client{commands, requester, credentials, pathManager, Settings.NewSettings(
 			Settings.NewOption(OPT_DebugMode, true),
 			Settings.NewOption(OPT_LoggedIn, false),
 			Settings.NewOption(OPT_PassiveMode, false),
@@ -524,6 +530,10 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 
 		/* Initialize a local file manager based on the client current working dir (localy) */
 		client.localFM, err = FileManager.NewFileManager()
+
+		/* Force the PathManager to use UNIX like path separators. */
+		client.path.UnixOnlyMode(true)
+		client.path.ChangeRoot(RootDir)
 
 		/* Enable debugging */
 		if client.settings.Get(OPT_DebugMode).Is(true) {
@@ -595,34 +605,6 @@ func (c *Client) downloadFile(file string) (ok bool, err error) {
 	}
 
 	return
-}
-
-/* Extracts the current path parts (directories and file) from the specified input */
-func (c *Client) extractPathElements(p string) (dir string, file string) {
-	p = Path.Clean(p)
-
-	if Path.Ext(p) == EmptyString && p != RootDir {
-		p = p + "/"
-	}
-
-	return Path.Split(p)
-}
-
-/* Given a relative path, will concatenate it with the current working directory and normalize it */
-func (c *Client) toAbsolutePath (d string) string {
-	var f string
-	if !Path.IsAbs(d) {
-		/* Not an absolute path, concatenate the relative path to the working directory, and normalize them together  */
-		if len(d) == 0 {
-			d = c.currentDir
-		} else {
-			d = c.currentDir + RootDir + d
-		}
-		d, f = c.extractPathElements(d)
-		d = Path.Join(d, f)
-	}
-
-	return d
 }
 
 /* Activates the passive mode if possible, and marks the internal options */
