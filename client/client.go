@@ -189,6 +189,8 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 	fileName = c.toAbsolutePath(fileName)
 	dir, file := c.extractPathElements(fileName)
 
+	fmt.Println(fmt.Sprintf("FileName: %s, dir: %s, file: %s", fileName, dir, file))
+
 	if ok, err = c.ChangeDir(dir); ok {
 		/* Use the last subdirectory as container for the downloaded content */
 		if len(file) == 0 {
@@ -217,18 +219,21 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 /* Download a directory at a time */
 func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err error) {
 	if !c.localFM.ContainsDir(currentDir) {
+		fmt.Println("Non existing directory")
+		fmt.Println("List", c.localFM.List())
+		fmt.Println("Args", currentDir, changePath)
+
 		/* Create a new directory */
 		if ok, err = c.localFM.MakeDir(currentDir); !ok {
 			err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", currentDir, err)
-			fmt.Println("Arg: ", currentDir)
-			fmt.Println(c.localFM.List())
 			return
 		}
 	}
 
 	/* Change to the existing directory */
-	if ok, err = c.localFM.ChangeDirRelative(currentDir); !ok {
-		fmt.Println(ok, err)
+	if ok, err = c.localFM.ChangeDir(currentDir); !ok {
+		fmt.Println("Existing directory selection")
+		fmt.Println(currentDir, ok, err)
 		fmt.Println(c.localFM.List())
 		err = fmt.Errorf("Download error: Unable to change path to local directory %s", currentDir)
 		return
@@ -236,6 +241,7 @@ func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err e
 
 	/* Change the remote host directory */
 	if changePath {
+		fmt.Println("Change to specified directory.")
 		if ok, err = c.ChangeDir(currentDir); !ok {
 			return
 		}
@@ -544,11 +550,15 @@ func (c *Client) downloadFile(file string) (ok bool, err error) {
 			return true, err
 		}
 
+		fmt.Println("Resource selection result", err, downloadBehaviour.Value())
+
 		if err != nil {
 			/* Unable to select the local resource */
 			err = fmt.Errorf("Download error: Unable to select local resource %s", r.Name)
 			return false, err
 		}
+
+		fmt.Println("Resource selected")
 
 		/* Put client in passive mode just before downloading */
 		if !c.InPassiveMode() {
@@ -556,12 +566,16 @@ func (c *Client) downloadFile(file string) (ok bool, err error) {
 			defer c.RestoreConnections();
 		}
 
+		fmt.Println("Pasive mode ok")
+
 		/* Set representation type */
 		if r.IsBinary() {
 			c.RepresentationType(ClientCommands.TYPE_Image, nil)
 		} else {
 			c.RepresentationType(ClientCommands.TYPE_Ascii, ClientCommands.FMTCTRL_NonPrint)
 		}
+
+		fmt.Println("Representation type selected")
 
 		if _, err = c.Commands.RETR(file, c.localFM.GetSelection()); err != nil {
 			err = fmt.Errorf("Download error: Unable to RETR file %s. Original error: %s", r.Name, err)

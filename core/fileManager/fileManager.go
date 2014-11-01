@@ -2,10 +2,9 @@ package fileManager
 
 import (
 	BaseParser "github.com/ghepesdoru/bookwormFTP/core/parsers/base"
+	PathManager "github.com/ghepesdoru/bookwormFTP/core/pathManager"
 	"fmt"
 	"os"
-	"path"
-	"strconv"
 )
 
 /* Definition of selection type */
@@ -43,60 +42,49 @@ var (
 
 /* Define the FileManager type */
 type FileManager struct {
-	rootDir		string
-	cwd			*os.File
+	path		*PathManager.PathManager
 	listing		[]os.FileInfo
 	focus		*os.File
 }
 
 /* Instantiates a new FileManager in the current process's working dir */
 func NewFileManager() (*FileManager, error) {
-	pwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-
-	pwd = path.Clean(pwd) + "/"
-	return NewFileManagerAt(pwd)
+	return NewFileManagerAt("")
 }
 
 /* Instantiates a new FileManager in the specified directory */
 func NewFileManagerAt(rootDir string) (fm *FileManager, err error) {
-	fm = &FileManager{rootDir, nil, []os.FileInfo{}, nil}
-	_, err = fm.ChangeDir(rootDir)
+	var pM *PathManager.PathManager
+
+	if len(rootDir) == 0 {
+		pM, err = PathManager.NewPathManager()
+	} else {
+		pM, err = PathManager.NewPathManagerAt(rootDir)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	fm = &FileManager{pM, []os.FileInfo{}, nil}
+
+	if _, err = fm.RefreshList(); err != nil {
+		fm = nil
+	}
 
 	return
 }
 
 /* Changes the current directory */
 func (fm *FileManager) ChangeDir(dir string) (ok bool, err error) {
-	var f os.File
-	var listing []os.FileInfo
-
-	dir = path.Clean(dir) + "/"
-
-	if !path.IsAbs(dir) {
-		return ok, ERR_InvalidPath
+	ok, err = fm.path.ChangeCurrentDir(dir)
+	if !ok {
+		return
 	}
 
-	if f, err := os.Open(dir); err == nil {
-		listing, err = f.Readdir(-1)
-	}
+	ok, err = fm.RefreshList()
 
-	if err == nil {
-		fm.cwd = &f
-		fm.listing = listing
-		fm.rootDir = dir
-		f.Close()
-		ok = true
-	}
-
-	return
-}
-
-/* Changes the path relative to the current parent directory */
-func (fm *FileManager) ChangeDirRelative(localPath string) (ok bool, err error) {
-	return fm.ChangeDir(fm.rootDir + localPath)
+	return err == nil, err
 }
 
 /* Checks if the current directory contains the specified resource taking type into consideration */
@@ -125,16 +113,16 @@ func (fm *FileManager) CreateFile(fileName string) (ok bool, err error) {
 	var f *os.File
 	var fs os.FileInfo
 
-	f, err  = os.Create(fileName)
+	f, err  = os.Create(fm.path.ToCurrentDir(fileName))
+	fmt.Println("After file creation in CreateFile:", f, err, fm.path.ToCurrentDir(fileName))
 
 	if err == nil {
+		defer f.Close()
 		if fs, err = f.Stat(); err == nil {
 			fm.listing = append(fm.listing, fs)
 		} else {
-			ok, err = fm.ChangeDir(fm.cwd.Name())
+			ok, err = fm.RefreshList()
 		}
-
-		f.Close()
 	}
 
 	return err == nil, err
@@ -175,10 +163,11 @@ func (fm *FileManager) listFileType(isDir bool) string {
 
 /* Create a new directory */
 func (fm *FileManager) MakeDir(dir string) (ok bool, err error) {
+	dir = fm.path.ToCurrentDir(dir)
 	err = os.Mkdir(dir, os.ModePerm)
 
 	if err == nil {
-		if s, e := os.Stat(fm.rootDir + dir); e == nil {
+		if s, e := os.Stat(dir); e == nil {
 			fm.listing = append(fm.listing, s)
 		} else {
 			err = e
@@ -188,13 +177,29 @@ func (fm *FileManager) MakeDir(dir string) (ok bool, err error) {
 	return err == nil, err
 }
 
+/* Refreshes the current directory FileInfo list */
+func (fm *FileManager) RefreshList() (ok bool, err error) {
+	var f *os.File
+
+	if f, err = os.Open(fm.path.GetCurrentDir()); err == nil {
+		defer f.Close()
+		fm.listing, err = f.Readdir(-1)
+
+		if err != nil {
+			fm.listing = []os.FileInfo{}
+		}
+	}
+
+	return err == nil, err
+}
+
 /* File structure getter, can be used in cases where a reader/writer is required */
 func (fm *FileManager) Select(fileName string, se selection) (f *os.File, err error) {
-	return fm._select(fileName, se, 0)
+	return fm._select(fileName, se)
 }
 
 /* File structure getter with support for incremental file name creation. */
-func (fm *FileManager) _select(fileName string, se selection, increment int) (f *os.File, err error) {
+func (fm *FileManager) _select(fileName string, se selection) (f *os.File, err error) {
 	var s os.FileInfo
 	var selection selectionType
 	selection, _ = SelectionTypes[se]
@@ -210,16 +215,12 @@ func (fm *FileManager) _select(fileName string, se selection, increment int) (f 
 	if fm.ContainsFile(fileName) {
 		if se == SELECT_CreateNew {
 			/* Create a new file if a file with the specified name exists */
-			ext := path.Ext(fileName)
-			l := len(fileName)
-			if increment == 0 {
-				fileName = fileName[:l - len(ext)] + "_" + strconv.Itoa(increment) + ext
-			} else {
-				fileName = fileName[:l - (len(ext) + 2)] + "_" + strconv.Itoa(increment) + ext
-			}
-			return fm._select(fileName, se, increment + 1)
+			fmt.Println("File name incremented", fm.path.IterateFileName(fileName))
+			return fm._select(fm.path.IterateFileName(fileName), se)
 		} else {
-			f, err = os.OpenFile(path.Join(fm.rootDir, fileName), selection.open_flag, selection.permissions)
+			fmt.Println("Before opening file:")
+			f, err = os.OpenFile(fm.path.ToCurrentDir(fileName), selection.open_flag, selection.permissions)
+			fmt.Println("After opening file:", f, err, fm.path.ToCurrentDir(fileName))
 
 			if err == nil {
 				s, err = f.Stat()
@@ -232,9 +233,10 @@ func (fm *FileManager) _select(fileName string, se selection, increment int) (f 
 			}
 		}
 	} else if se != SELECT_ReadOnly && se != SELECT_Append && se != SELECT_Truncate {
+		fmt.Println("Before creating file:")
 		/* Create the new file */
-		_, err = fm.CreateFile(path.Join(fm.rootDir, fileName))
-
+		_, err = fm.CreateFile(fm.path.ToCurrentDir(fileName))
+		fmt.Println("After creating file:", err, fm.path.ToCurrentDir(fileName))
 		if err != nil {
 			return
 		}
@@ -245,7 +247,7 @@ func (fm *FileManager) _select(fileName string, se selection, increment int) (f 
 		}
 
 		/* A file with a new name was created, recursively open it for write */
-		return fm._select(fileName, se, increment)
+		return fm._select(fileName, se)
 	}
 
 	return
