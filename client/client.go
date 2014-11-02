@@ -509,7 +509,9 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 
 	if nil == err {
 		credentials = requester.GetCredentials()
-		if pathManager, err = PathManager.NewPathManagerAt(RootDir); err != nil {
+
+		/* Force the PathManager to use UNIX like path separators. */
+		if pathManager, err = PathManager.NewUnixPathManagerAt(RootDir); err != nil {
 			return
 		}
 
@@ -530,10 +532,6 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 
 		/* Initialize a local file manager based on the client current working dir (localy) */
 		client.localFM, err = FileManager.NewFileManager()
-
-		/* Force the PathManager to use UNIX like path separators. */
-		client.path.UnixOnlyMode(true)
-		client.path.ChangeRoot(RootDir)
 
 		/* Enable debugging */
 		if client.settings.Get(OPT_DebugMode).Is(true) {

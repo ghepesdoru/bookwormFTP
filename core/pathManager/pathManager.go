@@ -40,9 +40,18 @@ func NewPathManager() (*PathManager, error) {
 
 /* Instantiate a new path manager at the specified location */
 func NewPathManagerAt(rootDir string) (p *PathManager, err error) {
+	return newPathManagerAt(rootDir, false)
+}
+
+func NewUnixPathManagerAt(rootDir string) (p *PathManager, err error) {
+	return newPathManagerAt(rootDir, true)
+}
+
+/* Instantiates a new Path manager in unix mode/current mode at specified location */
+func newPathManagerAt(rootDir string, unixMode bool) (p *PathManager, err error) {
 	var ok bool
 
-	p = &PathManager{EmptyString, EmptyString, false}
+	p = &PathManager{EmptyString, EmptyString, unixMode}
 
 	ok, err = p.ChangeRoot(rootDir)
 	if !ok {
