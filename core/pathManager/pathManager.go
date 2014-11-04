@@ -135,6 +135,7 @@ func (p *PathManager) ChangeRoot(rootDir string) (ok bool, err error) {
 
 /* Cleans the path. Takes OS emulation into consideration */
 func (p *PathManager) Clean(path string) string {
+	// TODO: Take dir, file divisions into accound before cleaning and return /a/b/ as /a/b/ and not /a/b!!!!
 	if p._wrapperRequired() {
 		return Path.Clean(path)
 	}
@@ -225,11 +226,19 @@ func (p *PathManager) Join(elem ...string) string {
 /* Wrapper around filepath.Rel() that takes OS emulation into consideration */
 func (p *PathManager) Rel(basepath, targpath string) (path string, err error) {
 	if p._wrapperRequired() {
-		basepath = p.Clean(basepath)
-		targpath = p.Clean(targpath)
+		db, _ := p.Split(basepath)
+		dt, ft := p.Split(targpath)
+
+		basepath = p.Clean(db)
+		targpath = p.Clean(dt)
 
 		if basepath == targpath {
-			return ".", nil
+			return ".", err
+		}
+
+		if basepath == UNIXSeparatorString && p.IsAbs(targpath) {
+			fmt.Println("aberation is from here", dt + UNIXSeparatorString + p.Clean(ft))
+			return dt + UNIXSeparatorString + p.Clean(ft), err
 		}
 
 		bp := strings.Split(basepath, UNIXSeparatorString)
@@ -255,8 +264,7 @@ func (p *PathManager) Rel(basepath, targpath string) (path string, err error) {
 			if matches == blen {
 				/* Subdirectory of the base path */
 				tp = tp[matches:]
-				fmt.Println("Gets here")
-				return "./" + strings.Join(tp, UNIXSeparatorString), nil
+				return "./" + strings.Join(tp, UNIXSeparatorString) + UNIXSeparatorString + p.Clean(ft), nil
 			} else if matches < blen {
 				/* Sibling of the current directory or it's parents */
 				a := []string{"."}
@@ -264,7 +272,7 @@ func (p *PathManager) Rel(basepath, targpath string) (path string, err error) {
 					a = append(a, "..")
 				}
 
-				return strings.Join(a, "/"), nil
+				return strings.Join(a, UNIXSeparatorString), nil
 			}
 		} else {
 			return EmptyString, fmt.Errorf("Rel: can't make %s relative to %s.", targpath, basepath)
@@ -302,8 +310,11 @@ func (p *PathManager) ToCurrentDir(fileName string) string {
 	}
 
 	dir, file := p.Split(fileName)
+	fmt.Println("Dir, file", dir, file)
 	dir, _ = p.Rel(p.GetCurrentDir(), dir)
+	fmt.Println("Dir after rel:", dir)
 	dir = p.Join(p.GetCurrentDir(), dir)
+	fmt.Println("Before join", dir, file)
 	return p.Join(dir, file)
 }
 

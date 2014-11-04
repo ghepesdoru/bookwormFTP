@@ -84,11 +84,12 @@ var (
 type Commands struct {
 	requester            *Requester.Requester
 	hasAttachedRequester bool
+	lastCommand			 *Command.Command
 }
 
 /* Instantiates a new Commands. */
 func NewCommands() (c *Commands) {
-	return &Commands{nil, false}
+	return &Commands{nil, false, nil}
 }
 
 /* Instantiate a new Commands instance. This can be used as a commands provider in the client */
@@ -159,6 +160,7 @@ func (c *Commands) simpleControlCommand(name string, param string, expected ...i
 
 	command := Command.NewCommand(name, param, expected)
 	c.requester.Request(command)
+	c.lastCommand = command
 
 	return command.Success(), command.LastError()
 }
@@ -177,6 +179,7 @@ func (c *Commands) controlCommandByte(name string, param string, expected ...int
 
 	command := Command.NewCommand(name, param, expected)
 	c.requester.Request(command)
+	c.lastCommand = command
 
 	return command.Success(), command.LastError(), command.Response().ByteMessage()
 }
@@ -188,6 +191,7 @@ func (c *Commands) simpleDataCommand(name string, param string, expected ...int)
 	}
 
 	command, data := c.requester.RequestData(Command.NewCommand(name, param, expected))
+	c.lastCommand = command
 	return data, command.LastError()
 }
 
@@ -198,7 +202,29 @@ func (c *Commands) dataCommand(w io.Writer, name string, param string, expected 
 	}
 
 	command, data := c.requester.RequestDataPipe(Command.NewCommand(name, param, expected), w)
+	c.lastCommand = command
 	return data, command.LastError()
+}
+
+/* Return the last executed command */
+func (c *Commands) LastStatus() int {
+	if c.lastCommand != nil && c.lastCommand.IsValidResponse() {
+		return c.lastCommand.Response().Status()
+	}
+
+	return -1
+}
+
+/* Checks if the server supports the last executed command */
+func (c *Commands) LastIsImplemented() bool {
+	status := c.LastStatus()
+	if status != -1 {
+		if status != Status.NotImplemented && Status.CommandNotImplemented != status {
+			return true
+		}
+	}
+
+	return false
 }
 
 func asUpperNormalized(s string) string {

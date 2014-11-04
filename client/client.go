@@ -102,7 +102,10 @@ func NewClient(address string) (client *Client, err error) {
 	client.TransferMode(ClientCommands.TRANSFER_Stream)
 	client.FileStructure(ClientCommands.FILESTRUCT_File)
 
+	fmt.Println("Current dir to change to", dir)
+
 	if dir != EmptyString {
+		fmt.Println("Changes the directory, and it shold list the contents")
 		_, err = client.ChangeDir(dir)
 	} else {
 		_, err = client.List()
@@ -193,6 +196,7 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 	fmt.Println(fmt.Sprintf("FileName: %s, dir: %s, file: %s", fileName, dir, file))
 
 	if ok, err = c.ChangeDir(dir); ok {
+		fmt.Println("Dir changed?!")
 		/* Use the last subdirectory as container for the downloaded content */
 		if len(file) == 0 {
 			/* Download the entire current directory */
@@ -219,15 +223,17 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 
 /* Download a directory at a time */
 func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err error) {
-	if !c.localFM.ContainsDir(currentDir) {
-		fmt.Println("Non existing directory")
-		fmt.Println("List", c.localFM.List())
-		fmt.Println("Args", currentDir, changePath)
+	if currentDir != RootDir {
+		if !c.localFM.ContainsDir(currentDir) {
+			fmt.Println("Non existing directory")
+			fmt.Println("List", c.localFM.List())
+			fmt.Println("Args", currentDir, changePath)
 
-		/* Create a new directory */
-		if ok, err = c.localFM.MakeDir(currentDir); !ok {
-			err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", currentDir, err)
-			return
+			/* Create a new directory */
+			if ok, err = c.localFM.MakeDir(currentDir); !ok {
+				err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", currentDir, err)
+				return
+			}
 		}
 	}
 
@@ -249,23 +255,24 @@ func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err e
 	}
 
 	if err == nil {
-		for _, f := range c.Resources.Content {
-			if !f.IsChild() {
-				continue
-			}
-
-			if f.IsDir() {
-				ok, err = c.downloadDir(f.Name, true)
-			} else {
-				/* File */
-				ok, err = c.downloadFile(f.Name)
-			}
-
-			if !ok {
-				err = fmt.Errorf("Download error: Unable to download remote resource %s. Original error: %s", f.Name, err)
-				return
-			}
-		}
+		fmt.Println("Resources:", c.Resources)
+//		for _, _ = range c.Resources.Content {
+//			if nil == f || !f.IsChild() {
+//				continue
+//			}
+//
+//			if f.IsDir() {
+//				ok, err = c.downloadDir(f.Name, true)
+//			} else {
+//				/* File */
+//				ok, err = c.downloadFile(f.Name)
+//			}
+//
+//			if !ok {
+//				err = fmt.Errorf("Download error: Unable to download remote resource %s. Original error: %s", f.Name, err)
+//				return
+//			}
+//		}
 	}
 
 	return
@@ -326,7 +333,6 @@ func (c *Client) ListFile(fileAndPath string) (*Resources.Resource, error) {
 
 /* Uses one of the supported features to list a container's resources or the named resource's facts */
 func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err error) {
-	var executed bool
 	if !c.InPassiveMode() {
 		_, err = c.PassiveMode()
 		defer c.RestoreConnections();
@@ -337,32 +343,26 @@ func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err er
 			/* Container listing */
 			if c.features.Supports("MLSD") {
 				res, err = c.Commands.MLSD(path)
-				executed = true
-			}
 
-			if executed && err != nil {
-				/* MLSD not supported, remove the feature from expected support and fallback on LIST */
-				c.features.RemoveFeature("MLSD")
-				executed = false
-			}
-
-			if !executed && c.features.Supports("LIST") {
+				if !c.Commands.LastIsImplemented() {
+					/* MLSD not supported, remove the feature from expected support and fallback on LIST */
+					c.features.RemoveFeature("MLSD")
+					return c.list(path, isFile)
+				}
+			} else if c.features.Supports("LIST") {
 				res, err = c.Commands.LIST(path)
 			}
 		} else {
 			/* Single resource listing */
 			if c.features.Supports("MLST") {
 				res, err = c.Commands.MLST(path)
-				executed = true
-			}
 
-			/* MLST not supported, remove the feature from expected support and fallback on LIST */
-			if executed && err != nil {
-				c.features.RemoveFeature("MLST")
-				executed = false
-			}
-
-			if c.features.Supports("LIST") {
+				if !c.Commands.LastIsImplemented() {
+					/* MLST not supported, remove the feature from expected support and fallback on LIST */
+					c.features.RemoveFeature("MLST")
+					return c.list(path, isFile)
+				}
+			} else if c.features.Supports("LIST") {
 				res, err = c.Commands.LIST(path)
 			}
 		}
@@ -370,6 +370,7 @@ func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err er
 
 	if err == nil {
 		c.Resources = res
+		fmt.Println(res.GetContentByName("mirror"))
 	}
 
 	return
@@ -585,9 +586,13 @@ func (c *Client) downloadFile(file string) (ok bool, err error) {
 
 		fmt.Println("Representation type selected")
 
-		if _, err = c.Commands.RETR(file, c.localFM.GetSelection()); err != nil {
-			err = fmt.Errorf("Download error: Unable to RETR file %s. Original error: %s", r.Name, err)
-			return
+		/* Only download files with a size greater then 0 */
+		if fileRes := c.Resources.GetContentByName(file); fileRes.Size > 0 {
+			fmt.Println("File resource size: ", fileRes.Size, fileRes, file)
+			if _, err = c.Commands.RETR(file, c.localFM.GetSelection()); err != nil {
+				err = fmt.Errorf("Download error: Unable to RETR file %s. Original error: %s", r.Name, err)
+				return
+			}
 		}
 
 		if err = c.localFM.SelectionClear(); err != nil {
