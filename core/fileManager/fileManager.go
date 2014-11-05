@@ -114,7 +114,6 @@ func (fm *FileManager) CreateFile(fileName string) (ok bool, err error) {
 	var fs os.FileInfo
 
 	f, err  = os.Create(fm.path.ToCurrentDir(fileName))
-	fmt.Println("After file creation in CreateFile:", f, err, fm.path.ToCurrentDir(fileName))
 
 	if err == nil {
 		defer f.Close()
@@ -163,8 +162,14 @@ func (fm *FileManager) listFileType(isDir bool) string {
 
 /* Create a new directory */
 func (fm *FileManager) MakeDir(dir string) (ok bool, err error) {
+	dir = fm.path.Clean(dir) + fm.path.GetSeparator()
 	dir = fm.path.ToCurrentDir(dir)
 	err = os.Mkdir(dir, os.ModePerm)
+
+	if err != nil && BaseParser.StringContains(err.Error(), "Cannot create a file when that file already exists") {
+		/* Ignore errors due to existing folders */
+		err = nil
+	}
 
 	if err == nil {
 		if s, e := os.Stat(dir); e == nil {

@@ -81,8 +81,6 @@ func (p *PathManager) Abs(path string) (string, error) {
 		return p.Join(p.rootDir, path), nil
 	}
 
-	fmt.Println("Abs executes without entering the wrapper thing")
-
 	return FilePath.Abs(path)
 }
 
@@ -97,6 +95,11 @@ func (p *PathManager) Base(path string) string {
 
 /* Change the current directory */
 func (p *PathManager) ChangeCurrentDir(currentDir string) (ok bool, err error) {
+	d, f := p.Split(currentDir)
+	if f == EmptyString {
+		currentDir = p.Clean(d)
+	}
+
 	if p.IsAbs(currentDir) {
 		/* Make the current directory relative */
 		currentDir, err = p.Rel(p.rootDir, currentDir)
@@ -104,21 +107,43 @@ func (p *PathManager) ChangeCurrentDir(currentDir string) (ok bool, err error) {
 		if err != nil {
 			return false, ERR_InvalidPath
 		}
-	}
 
-	p.currentDir = currentDir
+		/* Replace the current directory for absolute paths */
+		p.currentDir = currentDir
+	} else {
+		currentDir = p.Clean(currentDir)
+		p.currentDir = p.Clean(p.currentDir)
+		sep := "."
+		pSep := p.GetSeparator()
+		sep1 := sep + pSep
+
+		if currentDir == sep || sep1 == currentDir {
+			currentDir = EmptyString
+		}
+
+		if p.currentDir == sep || sep1 == p.currentDir {
+			p.currentDir = EmptyString
+		}
+
+		if p.currentDir != EmptyString {
+			/* Build the current path based on the existing current dir */
+			p.currentDir = p.currentDir + p.Clean(currentDir) + pSep
+		} else {
+			/* Build the current path based on the existing current dir */
+			p.currentDir = p.Clean(currentDir) + pSep
+		}
+	}
 
 	return true, err
 }
 
 /* Changes the root directory resetting the current directory */
 func (p *PathManager) ChangeRoot(rootDir string) (ok bool, err error) {
-	fmt.Println("current root", p.rootDir, "new root:", rootDir)
+	rootDir, _ = p.Split(rootDir)
+	rootDir = p.Clean(rootDir)
 	if !p.IsAbs(rootDir) {
 		/* Consider the specified root directory as being relative to the current working directory */
 		rootDir, err = p.Abs(rootDir)
-
-		fmt.Println("Root after abs", rootDir)
 
 		if err != nil {
 			return ok, ERR_InvalidRootPath
@@ -135,12 +160,24 @@ func (p *PathManager) ChangeRoot(rootDir string) (ok bool, err error) {
 
 /* Cleans the path. Takes OS emulation into consideration */
 func (p *PathManager) Clean(path string) string {
-	// TODO: Take dir, file divisions into accound before cleaning and return /a/b/ as /a/b/ and not /a/b!!!!
+	d, f := p.Split(path)
 	if p._wrapperRequired() {
-		return Path.Clean(path)
+		if f == EmptyString {
+			if d == UNIXSeparatorString {
+				return d
+			} else {
+				return Path.Clean(d) + UNIXSeparatorString
+			}
+		} else {
+			return Path.Clean(path)
+		}
+	} else {
+		if f == EmptyString {
+			return FilePath.Clean(d) + string(FilePath.Separator)
+		} else {
+			return FilePath.Clean(path)
+		}
 	}
-
-	return FilePath.Clean(path)
 }
 
 /* Wrapper around FilePath.Dir() that takes OS emulation into consideration */
@@ -161,14 +198,32 @@ func (p *PathManager) Ext(path string) string {
 	return FilePath.Ext(path)
 }
 
+/* Normalizes the current directory. */
+func (p *PathManager) _getCurrentDir() string {
+	if p.currentDir == EmptyString {
+		return EmptyString
+	} else {
+		return p.Clean(p.currentDir)
+	}
+}
+
 /* Current directory path getter. It will always return an absolute path. */
 func (p *PathManager) GetCurrentDir() string {
-	return p.Join(p.rootDir, p.currentDir)
+	return p.Clean(p.rootDir) + p._getCurrentDir()
 }
 
 /* Root directory getter. */
 func (p *PathManager) GetRootDir() string {
 	return p.rootDir
+}
+
+/* File path separator getter */
+func (p *PathManager) GetSeparator() string {
+	if p._wrapperRequired() {
+		return UNIXSeparatorString
+	} else {
+		return string(FilePath.Separator)
+	}
 }
 
 /* Wrapper around FilePath.IsAbs() that takes OS emulation into consideration */
@@ -237,8 +292,7 @@ func (p *PathManager) Rel(basepath, targpath string) (path string, err error) {
 		}
 
 		if basepath == UNIXSeparatorString && p.IsAbs(targpath) {
-			fmt.Println("aberation is from here", dt + UNIXSeparatorString + p.Clean(ft))
-			return dt + UNIXSeparatorString + p.Clean(ft), err
+			return "./" + targpath[1:], err
 		}
 
 		bp := strings.Split(basepath, UNIXSeparatorString)
@@ -297,6 +351,15 @@ func (p *PathManager) SplitDir(path string) string {
 	return path
 }
 
+/* Breaks down a path in a list of subdirectories */
+func (p *PathManager) SplitDirList(dir string) []string {
+	if p._wrapperRequired() {
+		return strings.Split(p.Clean(p.SplitDir(dir)), UNIXSeparatorString)
+	}
+
+	return strings.Split(p.Clean(p.SplitDir(dir)), string(FilePath.Separator))
+}
+
 /* Split the specified path to extract the file */
 func (p *PathManager) SplitFile(path string) string {
 	_, path = p.Split(path)
@@ -305,25 +368,34 @@ func (p *PathManager) SplitFile(path string) string {
 
 /* Attaches the specified file name to the current path */
 func (p *PathManager) ToCurrentDir(fileName string) string {
+	var dir, file string
+	var err error
+
 	if fileName == p.GetCurrentDir() {
 		return fileName
 	}
 
-	dir, file := p.Split(fileName)
-	fmt.Println("Dir, file", dir, file)
-	dir, _ = p.Rel(p.GetCurrentDir(), dir)
-	fmt.Println("Dir after rel:", dir)
-	dir = p.Join(p.GetCurrentDir(), dir)
-	fmt.Println("Before join", dir, file)
-	return p.Join(dir, file)
+	dir, file = p.Split(fileName)
+
+	if p.IsAbs(dir) {
+		dir, err = p.Rel(p.GetCurrentDir(), dir)
+
+		if err != nil {
+			/* There is no relationship between the specified path and the current directory, just add the file to the current directory */
+			return p.GetCurrentDir() + file
+		}
+	}
+
+	dir = p.GetCurrentDir() + dir
+
+	if file != EmptyString {
+		return p.Join(dir, file)
+	} else {
+		return p.Clean(dir)
+	}
 }
 
 /* Forces the Path Manager to use only / as path separator, and normalize all paths to be UNIX like. */
 func (p *PathManager) UnixOnlyMode(enable bool) {
 	p.unixOnly = enable
-
-	fmt.Println("Path rel by FilePath: ")
-	fmt.Println(FilePath.Abs("a/b/c/d///"))
-	fmt.Println("Path rel by wrapper: ")
-	fmt.Println(p.Abs("a/b/c/d///"))
 }

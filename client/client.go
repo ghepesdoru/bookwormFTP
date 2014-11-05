@@ -193,14 +193,11 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 	dir := c.path.SplitDir(fileName)
 	file := c.path.SplitFile(fileName)
 
-	fmt.Println(fmt.Sprintf("FileName: %s, dir: %s, file: %s", fileName, dir, file))
-
 	if ok, err = c.ChangeDir(dir); ok {
-		fmt.Println("Dir changed?!")
 		/* Use the last subdirectory as container for the downloaded content */
 		if len(file) == 0 {
 			/* Download the entire current directory */
-			return c.downloadDir(c.path.SplitDir(dir), false)
+			return c.downloadDir(dir, false)
 		} else {
 			if c.Resources.ContainsByName(file) {
 				r := c.Resources.GetContentByName(file)
@@ -225,25 +222,24 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err error) {
 	if currentDir != RootDir {
 		if !c.localFM.ContainsDir(currentDir) {
-			fmt.Println("Non existing directory")
-			fmt.Println("List", c.localFM.List())
-			fmt.Println("Args", currentDir, changePath)
+			dirs := c.path.SplitDirList(currentDir)
 
-			/* Create a new directory */
-			if ok, err = c.localFM.MakeDir(currentDir); !ok {
-				err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", currentDir, err)
-				return
+			for _, d := range dirs {
+				if d == EmptyString {
+					continue
+				}
+
+				/* Recreate the entire path to the current directory */
+				if ok, err = c.localFM.MakeDir(d); !ok {
+					err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", d, err)
+					return
+				} else {
+					if ok, err = c.localFM.ChangeDir("./" + d); !ok {
+						err = fmt.Errorf("Download error: Unable to change the current path to the newly created directory %s. Original Error: %s.", d, err)
+					}
+				}
 			}
 		}
-	}
-
-	/* Change to the existing directory */
-	if ok, err = c.localFM.ChangeDir(currentDir); !ok {
-		fmt.Println("Existing directory selection")
-		fmt.Println(currentDir, ok, err)
-		fmt.Println(c.localFM.List())
-		err = fmt.Errorf("Download error: Unable to change path to local directory %s", currentDir)
-		return
 	}
 
 	/* Change the remote host directory */
@@ -255,24 +251,23 @@ func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err e
 	}
 
 	if err == nil {
-		fmt.Println("Resources:", c.Resources)
-//		for _, _ = range c.Resources.Content {
-//			if nil == f || !f.IsChild() {
-//				continue
-//			}
-//
-//			if f.IsDir() {
-//				ok, err = c.downloadDir(f.Name, true)
-//			} else {
-//				/* File */
-//				ok, err = c.downloadFile(f.Name)
-//			}
-//
-//			if !ok {
-//				err = fmt.Errorf("Download error: Unable to download remote resource %s. Original error: %s", f.Name, err)
-//				return
-//			}
-//		}
+		for _, f := range c.Resources.Content {
+			if nil == f || !f.IsChild() {
+				continue
+			}
+
+			if f.IsDir() {
+				ok, err = c.downloadDir(f.Name, true)
+			} else {
+				/* File */
+				ok, err = c.downloadFile(f.Name)
+			}
+
+			if !ok {
+				err = fmt.Errorf("Download error: Unable to download remote resource %s. Original error: %s", f.Name, err)
+				return
+			}
+		}
 	}
 
 	return
@@ -587,8 +582,8 @@ func (c *Client) downloadFile(file string) (ok bool, err error) {
 		fmt.Println("Representation type selected")
 
 		/* Only download files with a size greater then 0 */
-		if fileRes := c.Resources.GetContentByName(file); fileRes.Size > 0 {
-			fmt.Println("File resource size: ", fileRes.Size, fileRes, file)
+		if fileRes := c.Resources.GetContentByName(file); fileRes.SizeInkB() > 0 {
+			fmt.Println("File resource size: ", fileRes.Size, fileRes, file, "in kb", fileRes.SizeInkB(), "in mb", fileRes.SizeInMB())
 			if _, err = c.Commands.RETR(file, c.localFM.GetSelection()); err != nil {
 				err = fmt.Errorf("Download error: Unable to RETR file %s. Original error: %s", r.Name, err)
 				return

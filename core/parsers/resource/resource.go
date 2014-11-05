@@ -364,6 +364,16 @@ func (r *Resource) IsParentDir() bool {
 	return r.Type == TYPE_PDir
 }
 
+/* Returns the size in kB */
+func (r *Resource) SizeInkB() float64 {
+	return BaseParser.Round(r.Size / 1024, 1)
+}
+
+/* Returns the size in MB */
+func (r *Resource) SizeInMB() float64 {
+	return BaseParser.Round(r.SizeInkB() / 1024, 1)
+}
+
 /*
 JS Mime type extraction scrapper: http://webdesign.about.com/od/multimedia/a/mime-types-by-file-extension.htm
 var rows = document.body.getElementsByTagName("table")[0].rows,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"time"
 	"fmt"
+	"math"
 )
 
 /* Basic Parsing functionality, reused in all parsers. */
@@ -109,6 +110,12 @@ func SplitOnSeparator(bulk []byte, sep []byte) ([][]byte) {
 	return bytes.Split(bulk, sep)
 }
 
+func StringContains(raw string, needle string) bool {
+	r := []byte(raw)
+	n := []byte(needle)
+	return bytes.Contains(r, n)
+}
+
 func ToLower(raw []byte) []byte {
 	return bytes.ToLower(raw)
 }
@@ -195,6 +202,35 @@ func ParseTimeVal(timeVal []byte) (t *time.Time, err error) {
 	location, err := time.LoadLocation("Etc/GMT")
 	aux := time.Date(year, IntToMonth[month], day, hour, min, sec, nsec, location)
 	return &aux, err
+}
+
+/* Round function courtesy of: https://gist.github.com/DavidVaini */
+func round(val float64, roundOn float64, places int ) (newVal float64) {
+	var round float64
+	pow := math.Pow(10, float64(places))
+	digit := pow * val
+	_, div := math.Modf(digit)
+	if div >= roundOn {
+		round = math.Ceil(digit)
+	} else {
+		round = math.Floor(digit)
+	}
+	newVal = round / pow
+	return
+}
+
+/* Round function, will round to the higher float value with specified precision */
+func Round(val interface{}, places int) float64 {
+	var v float64
+	switch val.(type) {
+	case int:
+		v = float64(val.(int))
+	case float32:
+		v = float64(val.(float32))
+	case float64:
+		v = val.(float64)
+	}
+	return  round(v, .5, places)
 }
 
 /* Generates a new TimeVal (ex: 20141030191749) from the specified Time */
