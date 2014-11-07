@@ -38,6 +38,11 @@ const (
 	OPT_DownloadOverlap	= "download_overlap"
 )
 
+var (
+	ERR_ReinNotImplemented	 = fmt.Errorf("Server state reinitialization not supported. (REIN)")
+	ERR_LoginAccountRequired = fmt.Errorf("Please specify an account and restart the authentication sequence.")
+)
+
 type DownloadOverlapAction string
 const (
 	DO_OverWrite		DownloadOverlapAction = "overwrite"
@@ -139,6 +144,50 @@ func NewIPv4(address string) (*Client, error) {
 /* Instantiates a new client forcing IP version 6 */
 func NewIPv6(address string) (*Client, error) {
 	return newClient(address, Address.IPv6)
+}
+
+/* Register account information */
+func (c *Client) Account(accountInfo string) (ok bool, err error) {
+	if c.settings.Get(OPT_AccountEnabled).Is(true) {
+		if c.settings.Get(OPT_Account).Is(accountInfo) {
+			/* Same account, return */
+			return true, err
+		} else {
+			/* Connection reinitialization required to change account information */
+			if ok, err = c.Commands.REIN(); !ok {
+				if !c.Commands.LastIsImplemented() {
+					return ok, ERR_ReinNotImplemented
+				} else {
+					/* Unable to reinitialize the current control connection */
+					return ok, err
+				}
+			} else {
+				/* Successfully reinitialized, mark the connection as being non authenticated */
+				c.settings.Get(OPT_LoggedIn).Reset()
+				c.settings.Get(OPT_AccountEnabled).Reset()
+
+				/* Connection reinitialized, log in back again and provide specified account info */
+				return c.Account(accountInfo)
+			}
+		}
+	} else {
+		/* Use the current account information as default account information. */
+		c.settings.Get(OPT_Account).Set(accountInfo)
+	}
+
+	/* If the current connection is not authenticated, log in */
+	if c.settings.Get(OPT_LoggedIn).Is(true) {
+		return c.LogIn(nil)
+	} else {
+		ok, err = c.Commands.ACCT(accountInfo)
+
+		if ok {
+			/* Mark the current account information as being registered */
+			c.settings.Get(OPT_AccountEnabled).Set(true)
+		}
+	}
+
+	return
 }
 
 /* Changes the current working directory on the host */
@@ -372,13 +421,72 @@ func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err er
 }
 
 /* Log's in with client registered credentials (USER, PASS sequence) */
-func (c *Client) LogIn(credentials *Credentials.Credentials) (bool, error) {
-	_, command := c.requester.Sequence(
-		ClientCommands.NewCommand("user", credentials.Username(), Status.UserNameOk),
-		ClientCommands.NewCommand("pass", credentials.Password(), Status.UserLoggedIn, Status.AccountForLogin),
-	)
+func (c *Client) LogIn(credentials *Credentials.Credentials) (ok bool, err error) {
+	var modified int = -1
+	var command *Command.Command
 
-	return command.Success(), command.LastError()
+	if credentials == nil {
+		/* Fallback on existing credentials - if none encoded in the URL this will mean an anonymous login */
+		credentials = c.credentials
+		modified = 2
+	}
+
+	/* Different credentials from client initialization registered ones */
+	if modified != 2 {
+		if credentials.Username() != c.credentials.Username() || c.credentials.Password() != credentials.Password() {
+			/* Keep track of current credentials */
+			c.credentials = credentials
+		}
+
+		if c.settings.Get(OPT_LoggedIn).Is(true) {
+			/* Reset the login status, reinitializing the connection */
+			if ok, err = c.Commands.REIN(); !ok {
+				if !c.Commands.LastIsImplemented() {
+					/* Rein is not implemented, a new manual connection shold be started */
+					return ok, ERR_ReinNotImplemented
+				} else {
+					/* Unable to reinitialize the current control connection */
+					return ok, err
+				}
+			} else {
+				/* Successfully reinitialized, mark the connection as being non authenticated */
+				c.settings.Get(OPT_LoggedIn).Reset()
+			}
+		}
+	}
+
+	/* Log in */
+	if c.settings.Get(OPT_LoggedIn).Is(false) {
+		_, command = c.requester.Sequence(
+			ClientCommands.NewCommand("user", credentials.Username(), Status.UserNameOk),
+			ClientCommands.NewCommand("pass", credentials.Password(), Status.UserLoggedIn, Status.AccountForLogin),
+		)
+
+		ok, err = command.Success(), command.LastError()
+
+		if ok {
+			/* If the server requires an account, send the account information to the server */
+			if c.Commands.LastStatus == Status.AccountForLogin {
+				if !c.settings.Get(OPT_Account).Is(EmptyString) {
+					/* Provide the user account to the server */
+					ok, err = c.Commands.ACCT(c.settings.Get(OPT_Account).ToString())
+
+					if !ok {
+						/* Unable to set account or invalid account */
+						return
+					} else {
+						/* Account selected */
+						c.settings.Get(OPT_AccountEnabled).Set(true)
+					}
+				} else {
+					/* Empty account data */
+					return ok, ERR_LoginAccountRequired
+				}
+			}
+		}
+	}
+
+	return
 }
 
 /* Puts the client in passive mode, and makes the client ready for accessing the data connection */
