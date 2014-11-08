@@ -93,6 +93,16 @@ func (r *Reader) GetNow() []byte {
 	return []byte{}
 }
 
+/* Get the number of read bytes */
+func (r *Reader) GetReadBytes() int {
+	return r.nRBytes
+}
+
+/* Get the number of written bytes */
+func (r *Reader) GetWrittenBytes() int {
+	return r.nWBytes
+}
+
 /* Checks if the reader encountered any errors */
 func (r *Reader) HasErrors() bool {
 	return r.err == nil

@@ -148,46 +148,7 @@ func NewIPv6(address string) (*Client, error) {
 
 /* Register account information */
 func (c *Client) Account(accountInfo string) (ok bool, err error) {
-	if c.settings.Get(OPT_AccountEnabled).Is(true) {
-		if c.settings.Get(OPT_Account).Is(accountInfo) {
-			/* Same account, return */
-			return true, err
-		} else {
-			/* Connection reinitialization required to change account information */
-			if ok, err = c.Commands.REIN(); !ok {
-				if !c.Commands.LastIsImplemented() {
-					return ok, ERR_ReinNotImplemented
-				} else {
-					/* Unable to reinitialize the current control connection */
-					return ok, err
-				}
-			} else {
-				/* Successfully reinitialized, mark the connection as being non authenticated */
-				c.settings.Get(OPT_LoggedIn).Reset()
-				c.settings.Get(OPT_AccountEnabled).Reset()
-
-				/* Connection reinitialized, log in back again and provide specified account info */
-				return c.Account(accountInfo)
-			}
-		}
-	} else {
-		/* Use the current account information as default account information. */
-		c.settings.Get(OPT_Account).Set(accountInfo)
-	}
-
-	/* If the current connection is not authenticated, log in */
-	if c.settings.Get(OPT_LoggedIn).Is(true) {
-		return c.LogIn(nil)
-	} else {
-		ok, err = c.Commands.ACCT(accountInfo)
-
-		if ok {
-			/* Mark the current account information as being registered */
-			c.settings.Get(OPT_AccountEnabled).Set(true)
-		}
-	}
-
-	return
+	return c.account(accountInfo, false, false)
 }
 
 /* Changes the current working directory on the host */
@@ -423,7 +384,6 @@ func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err er
 /* Log's in with client registered credentials (USER, PASS sequence) */
 func (c *Client) LogIn(credentials *Credentials.Credentials) (ok bool, err error) {
 	var modified int = -1
-	var command *Command.Command
 
 	if credentials == nil {
 		/* Fallback on existing credentials - if none encoded in the URL this will mean an anonymous login */
@@ -440,24 +400,16 @@ func (c *Client) LogIn(credentials *Credentials.Credentials) (ok bool, err error
 
 		if c.settings.Get(OPT_LoggedIn).Is(true) {
 			/* Reset the login status, reinitializing the connection */
-			if ok, err = c.Commands.REIN(); !ok {
-				if !c.Commands.LastIsImplemented() {
-					/* Rein is not implemented, a new manual connection shold be started */
-					return ok, ERR_ReinNotImplemented
-				} else {
-					/* Unable to reinitialize the current control connection */
-					return ok, err
-				}
-			} else {
-				/* Successfully reinitialized, mark the connection as being non authenticated */
-				c.settings.Get(OPT_LoggedIn).Reset()
+			if ok, err = c.Reinitialize(); !ok {
+				/* Unable to reinitialize connection to change authentication data */
+				return
 			}
 		}
 	}
 
 	/* Log in */
 	if c.settings.Get(OPT_LoggedIn).Is(false) {
-		_, command = c.requester.Sequence(
+		_, command := c.requester.Sequence(
 			ClientCommands.NewCommand("user", credentials.Username(), Status.UserNameOk),
 			ClientCommands.NewCommand("pass", credentials.Password(), Status.UserLoggedIn, Status.AccountForLogin),
 		)
@@ -466,22 +418,17 @@ func (c *Client) LogIn(credentials *Credentials.Credentials) (ok bool, err error
 
 		if ok {
 			/* If the server requires an account, send the account information to the server */
-			if c.Commands.LastStatus == Status.AccountForLogin {
-				if !c.settings.Get(OPT_Account).Is(EmptyString) {
-					/* Provide the user account to the server */
-					ok, err = c.Commands.ACCT(c.settings.Get(OPT_Account).ToString())
-
-					if !ok {
-						/* Unable to set account or invalid account */
-						return
-					} else {
-						/* Account selected */
-						c.settings.Get(OPT_AccountEnabled).Set(true)
-					}
-				} else {
-					/* Empty account data */
-					return ok, ERR_LoginAccountRequired
+			if c.Commands.LastStatus() == Status.AccountForLogin {
+				/* Provide the user account to the server */
+				if ok, err = c.account(c.settings.Get(OPT_Account).ToString(), false, true); !ok {
+					/* Unable to set the specified account */
+					return
 				}
+			}
+
+			if ok {
+				/* User account specified/not required */
+				c.settings.Get(OPT_LoggedIn).Set(true)
 			}
 		}
 	}
@@ -536,6 +483,31 @@ func (c *Client) RepresentationType(representationType string, typeParameter int
 	}
 
 	return ok, err
+}
+
+/* Connection reinitialization method (uses REIN) */
+func (c *Client) Reinitialize() (ok bool, err error) {
+	if c.features.Supports("REIN") {
+		/* Connection reinitialization attempt */
+		if ok, err = c.Commands.REIN(); !ok {
+			if !c.Commands.LastIsImplemented() {
+				/* Differentiate between common errors and lack of server support (and remember it) */
+				err = ERR_ReinNotImplemented
+				c.features.RemoveFeature("REIN")
+			}
+		}
+	} else {
+		err = ERR_ReinNotImplemented
+	}
+
+	/* Reinitialization completed with success */
+	if ok {
+		/* Restart all affected connection settings */
+		c.settings.Get(OPT_LoggedIn).Reset()
+		c.settings.Get(OPT_AccountEnabled).Reset()
+	}
+
+	return
 }
 
 /* Restores the client connection settings to the defaults */
@@ -646,6 +618,55 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 	return
 }
 
+/* Sets the account information */
+func (c *Client) account(accountInfo string, afterREIN bool, fromLogIn bool) (ok bool, err error) {
+	var validAccInfo bool
+
+	/* Check specified account information validity (TODO: refine this step) */
+	if accountInfo == EmptyString {
+		validAccInfo = false
+	}
+
+	if c.settings.Get(OPT_AccountEnabled).Is(true) {
+		if c.settings.Get(OPT_Account).Is(accountInfo) {
+			/* Same account, return */
+			return true, err
+		} else if validAccInfo {
+			/* Connection reinitialization required to change account information */
+			if ok, err = c.Reinitialize(); !ok {
+				/* Unable to reinitialize the current control connection */
+				return
+			} else {
+				/* Connection reinitialized, log in back again and provide specified account info */
+				return c.account(accountInfo, true, false)
+			}
+		} else {
+			return ok, ERR_LoginAccountRequired
+		}
+	} else if validAccInfo {
+		/* Use the current account information as default account information. */
+		c.settings.Get(OPT_Account).Set(accountInfo)
+	} else {
+		/* Invalid account information */
+		return ok, ERR_LoginAccountRequired
+	}
+
+	/* If the current connection was authenticated and an account information change was requested, log back in */
+	if afterREIN {
+		return c.LogIn(nil)
+	} else if fromLogIn {
+		/* Reply to the server with the current account information if requested from the login sequence */
+		ok, err = c.Commands.ACCT(accountInfo)
+
+		if ok {
+			/* Mark the current account information as being registered */
+			c.settings.Get(OPT_AccountEnabled).Set(true)
+		}
+	}
+
+	return
+}
+
 /* Downloads the specified file */
 func (c *Client) downloadFile(file string) (ok bool, err error) {
 	downloadBehaviour := c.settings.Get(OPT_DownloadOverlap)
@@ -683,11 +704,11 @@ func (c *Client) downloadFile(file string) (ok bool, err error) {
 		/* Set representation type */
 		if r.IsBinary() {
 			c.RepresentationType(ClientCommands.TYPE_Image, nil)
+			fmt.Println("Representation type selected", ClientCommands.TYPE_Image)
 		} else {
 			c.RepresentationType(ClientCommands.TYPE_Ascii, ClientCommands.FMTCTRL_NonPrint)
+			fmt.Println("Representation type selected", ClientCommands.TYPE_Ascii)
 		}
-
-		fmt.Println("Representation type selected")
 
 		/* Only download files with a size greater then 0 */
 		if fileRes := c.Resources.GetContentByName(file); fileRes.SizeInkB() > 0 {

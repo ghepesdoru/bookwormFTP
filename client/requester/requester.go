@@ -70,6 +70,11 @@ type Requester struct {
 	Logger				*Logger.Logger
 }
 
+type DataTransferStatus struct {
+	Read				int
+	Written				int
+}
+
 /* Generates a new Requester using any of the supported ip versions. (IPv4 first) */
 func NewRequester(hostURL string) (r *Requester, err error) {
 	r, err = NewRequesterIPv4(hostURL)
@@ -103,6 +108,15 @@ func (r *Requester) GetHostAddr() *Address.Addr {
 /* Getter for the current requester registered hostURL path segments */
 func (r *Requester) GetInitialPath() (string, string) {
 	return r.initDir, r.initFile
+}
+
+/* Gets the current data connection read/write status */
+func (r *Requester) GetDataStatus() *DataTransferStatus {
+	if r.dataReader != nil {
+		return &DataTransferStatus{r.dataReader.GetReadBytes(), r.dataReader.GetWrittenBytes()}
+	}
+
+	return &DataTransferStatus{}
 }
 
 /* Checks if the current requester is connected */
@@ -458,7 +472,7 @@ func (r *Requester) execute(command *Command.Command, isSequence bool, execute b
 			if len(v) > 0 {
 				break
 			} else {
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(200 * time.Millisecond)
 			}
 		}
 

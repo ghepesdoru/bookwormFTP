@@ -51,10 +51,12 @@ If your specific context requires setting a realm or an account before connectin
     c, err := Client.NewIPv4("URL")
     
     /* Set the client account data */
+    c.Account("Account_information_string")
     
-    /* Set the client realm */
+    /* Set the client realm (this has to be set before login in or a 
+     * reinitialization will be required) */
     
-    /* Use non url embedded credentials 
+    /* Use non url embedded credentials example
      * (Credentials "github.com/ghepesdoru/bookwormFTP/core/credentials") 
      */
     credentials, err := Credentials.NewCredentials("username", "password")
@@ -62,5 +64,5 @@ If your specific context requires setting a realm or an account before connectin
         panic("Wrong credentials.")
     }
     
-    /* Login (will take account information into account if requested) */
+    /* Login (will take account information into account if requested by server) */
     c.LogIn(credentials)
