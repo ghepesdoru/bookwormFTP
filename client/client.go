@@ -41,6 +41,7 @@ const (
 var (
 	ERR_ReinNotImplemented	 = fmt.Errorf("Server state reinitialization not supported. (REIN)")
 	ERR_LoginAccountRequired = fmt.Errorf("Please specify an account and restart the authentication sequence.")
+	ERR_SelectVHBeforeAuth 	 = fmt.Errorf("The current connection can not be reinititialized. Please start a new connection and chose the virtual server before the authentication process.")
 )
 
 type DownloadOverlapAction string
@@ -228,61 +229,6 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 	return
 }
 
-/* Download a directory at a time */
-func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err error) {
-	if currentDir != RootDir {
-		if !c.localFM.ContainsDir(currentDir) {
-			dirs := c.path.SplitDirList(currentDir)
-
-			for _, d := range dirs {
-				if d == EmptyString {
-					continue
-				}
-
-				/* Recreate the entire path to the current directory */
-				if ok, err = c.localFM.MakeDir(d); !ok {
-					err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", d, err)
-					return
-				} else {
-					if ok, err = c.localFM.ChangeDir("./" + d); !ok {
-						err = fmt.Errorf("Download error: Unable to change the current path to the newly created directory %s. Original Error: %s.", d, err)
-					}
-				}
-			}
-		}
-	}
-
-	/* Change the remote host directory */
-	if changePath {
-		fmt.Println("Change to specified directory.")
-		if ok, err = c.ChangeDir(currentDir); !ok {
-			return
-		}
-	}
-
-	if err == nil {
-		for _, f := range c.Resources.Content {
-			if nil == f || !f.IsChild() {
-				continue
-			}
-
-			if f.IsDir() {
-				ok, err = c.downloadDir(f.Name, true)
-			} else {
-				/* File */
-				ok, err = c.downloadFile(f.Name)
-			}
-
-			if !ok {
-				err = fmt.Errorf("Download error: Unable to download remote resource %s. Original error: %s", f.Name, err)
-				return
-			}
-		}
-	}
-
-	return
-}
-
 /* Extracts the server supported features map */
 func (c *Client) Features() (feat *Features.Features, err error) {
 	if c.features == nil {
@@ -309,6 +255,19 @@ func (c *Client) FileStructure(fileStructure string) (ok bool, err error) {
 		c.settings.Get(OPT_FileStructure).Set(fileStructure)
 	}
 	return ok, err
+}
+
+/* Request server to expose the user to the content's of the specified virtual host */
+func (c *Client) Host(virtualHost string) (bool, error) {
+	/* If a user is authenticated, try to reinitialize the connection */
+	if c.settings.Get(OPT_LoggedIn).Is(true) {
+		if ok, _ := c.Reinitialize(); !ok {
+			/* Could not reinitialize the connection, notify the user to create a new connection */
+			return false, ERR_SelectVHBeforeAuth
+		}
+	}
+
+	return c.Commands.HOST(virtualHost)
 }
 
 /* Checks if the client is in any of the supported passive modes */
@@ -661,6 +620,61 @@ func (c *Client) account(accountInfo string, afterREIN bool, fromLogIn bool) (ok
 		if ok {
 			/* Mark the current account information as being registered */
 			c.settings.Get(OPT_AccountEnabled).Set(true)
+		}
+	}
+
+	return
+}
+
+/* Download a directory at a time */
+func (c *Client) downloadDir(currentDir string, changePath bool) (ok bool, err error) {
+	if currentDir != RootDir {
+		if !c.localFM.ContainsDir(currentDir) {
+			dirs := c.path.SplitDirList(currentDir)
+
+			for _, d := range dirs {
+				if d == EmptyString {
+					continue
+				}
+
+				/* Recreate the entire path to the current directory */
+				if ok, err = c.localFM.MakeDir(d); !ok {
+					err = fmt.Errorf("Download error: Unable to create local directory %s. Original error: %s", d, err)
+					return
+				} else {
+					if ok, err = c.localFM.ChangeDir("./" + d); !ok {
+						err = fmt.Errorf("Download error: Unable to change the current path to the newly created directory %s. Original Error: %s.", d, err)
+					}
+				}
+			}
+		}
+	}
+
+	/* Change the remote host directory */
+	if changePath {
+		fmt.Println("Change to specified directory.")
+		if ok, err = c.ChangeDir(currentDir); !ok {
+			return
+		}
+	}
+
+	if err == nil {
+		for _, f := range c.Resources.Content {
+			if nil == f || !f.IsChild() {
+				continue
+			}
+
+			if f.IsDir() {
+				ok, err = c.downloadDir(f.Name, true)
+			} else {
+				/* File */
+				ok, err = c.downloadFile(f.Name)
+			}
+
+			if !ok {
+				err = fmt.Errorf("Download error: Unable to download remote resource %s. Original error: %s", f.Name, err)
+				return
+			}
 		}
 	}
 

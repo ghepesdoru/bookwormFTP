@@ -42,8 +42,8 @@ If your only requirement is to download a specific file or recursively an entire
      */
     c, err := Client.NewDownload("ftp.mozilla.org/pub/mozilla.org/")
     
-###Realm and account settings
-If your specific context requires setting a realm or an account before connecting, a manual initialization throw one of the lower lever builders is required.
+###Host and account settings
+If your specific context requires setting a host environment or an account before connecting, a manual initialization throw one of the lower lever builders is required.
 
     /*
      * Manual initialization of an IPv4 connection to the server
@@ -53,8 +53,9 @@ If your specific context requires setting a realm or an account before connectin
     /* Set the client account data */
     c.Account("Account_information_string")
     
-    /* Set the client realm (this has to be set before login in or a 
+    /* Set the client host (this has to be set before login in or a 
      * reinitialization will be required) */
+    c.Host("virtualHostName")
     
     /* Use non url embedded credentials example
      * (Credentials "github.com/ghepesdoru/bookwormFTP/core/credentials") 
@@ -66,3 +67,13 @@ If your specific context requires setting a realm or an account before connectin
     
     /* Login (will take account information into account if requested by server) */
     c.LogIn(credentials)
+    
+##Advanced usage cases
+###Unmanaged commands
+If you require to use any of the commands not externalized by the client, direct command querying is possible throw the usage of .Commands. Most commands will reply with a success execution flag and the eventual error in case of failure, but each command that should return a meaning full reply will do this in plain string or throw one of the core library types (for example FEAT will return a Features structure, LIST and MLSD will return a Resource structure, etc.)
+    
+    /* Manual commands invocation examples  */
+    serverHelpReply, err = c.Commands.Help("with")
+    systemType, err = c.Commands.SYST()
+    ok, err = c.Commands.CWD("/desired/path/to/change/to")
+    
