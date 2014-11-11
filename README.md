@@ -51,10 +51,7 @@ To establish the current connection in a fully functional connection, at least a
 * <b>Feature detection:</b> the client has to know server supported feature before usage. This can be done using the <b>Features()</b> client method.
 * <b>Determine the server side current directory</b>: Required step if the initial client path differs from the default root directory <b>/</b>
 
-
-    /*
-     * Manual initialization of an IPv4 connection to the server
-     */
+   // Manual initialization of an IPv4 connection to the server
     c, err := Client.NewIPv4("URL")
     
     /* Set the client account data */
