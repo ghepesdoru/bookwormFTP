@@ -51,6 +51,26 @@ To establish the current connection in a fully functional connection, at least a
 * <b>Feature detection:</b> the client has to know server supported feature before usage. This can be done using the <b>Features()</b> client method.
 * <b>Determine the server side current directory</b>: Required step if the initial client path differs from the default root directory <b>/</b>
 
+   /* Manual initialization of an IPv4 connection to the server */
+    c, err := Client.NewIPv4("URL")
+    
+    /* Set the client account data */
+    c.Account("Account_information_string")
+    
+    /* Set the client host (this has to be set before login in or a 
+     * reinitialization will be required) */
+    c.Host("virtualHostName")
+    
+    /* Use non url embedded credentials example
+     * (Credentials "github.com/ghepesdoru/bookwormFTP/core/credentials") 
+     */
+    credentials, err := Credentials.NewCredentials("username", "password")
+    if err != nil {
+        panic("Wrong credentials.")
+    }
+    
+    /* Login (will take account information into account if requested by server) */
+    c.LogIn(credentials)
 ###Downloading
 ####Fast download
 If your only requirement is to download a specific file or recursively an entire directory and all it's contents, you can establish a client instance specifically for this purpose using .NewDownload("URL"). This builder reuses .NewClient and will try to establish a new connection on first available IPv.
