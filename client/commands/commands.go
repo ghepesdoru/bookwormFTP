@@ -281,7 +281,7 @@ func (c *Commands) CWD(path string) (bool, error) {
 }
 
 func (c *Commands) DELE(path string) (bool, error) {
-	return c.simpleControlCommand("cwd", path, Status.FileActionOk)
+	return c.simpleControlCommand("dele", path, Status.FileActionOk)
 }
 
 func (c *Commands) ENC() (bool, error) {

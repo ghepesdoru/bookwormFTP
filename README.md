@@ -86,6 +86,19 @@ If your only requirement is to download a specific file or recursively an entire
      * with the server rules, so don't!) 
      */
     c, err := Client.NewDownload("ftp.mozilla.org/pub/mozilla.org/")
+
+####Download with an initialized client
+Any client can download at any time any specified resource (file or directory) at any time. 
+    
+    /* Download the resource */
+    ok, err = c.Download("resourceName")
+     
+    
+###File and directory removal
+At any point, using any initialized client, any resource from any path can be removed using the client's method <b>Delete</b>()
+
+    /* Delete the resource by it's path (being it relative or absolute) */
+    ok, err = c.Delete("resourceNameOrPath")
     
 ##Advanced usage cases
 ###Unmanaged commands

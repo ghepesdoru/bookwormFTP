@@ -39,9 +39,15 @@ const (
 )
 
 var (
-	ERR_ReinNotImplemented	 = fmt.Errorf("Server state reinitialization not supported. (REIN)")
+	ERR_ReinNotImplemented	 = fmt.Errorf("Server state reinitialization not supported. (REIN).")
 	ERR_LoginAccountRequired = fmt.Errorf("Please specify an account and restart the authentication sequence.")
 	ERR_SelectVHBeforeAuth 	 = fmt.Errorf("The current connection can not be reinititialized. Please start a new connection and chose the virtual server before the authentication process.")
+	ERR_UnableToLocateRes	 = fmt.Errorf("Unable to locate specified resource.")
+	ERR_TruncateRights		 = fmt.Errorf("Insuficient rights for directory truncation.")
+	ERR_DeleteRights		 = fmt.Errorf("Insuficient rights for file removal.")
+	ERR_NonRetrievable		 = fmt.Errorf("Non retrievable resource.")
+	ERR_Disconnected		 = fmt.Errorf("Unable to execute specified command, the connection is disconnected.")
+	ERR_LoginRequired		 = fmt.Errorf("Unable to execute specified command, the connection is not authenticated.")
 )
 
 type DownloadOverlapAction string
@@ -49,10 +55,6 @@ const (
 	DO_OverWrite		DownloadOverlapAction = "overwrite"
 	DO_CreateNew		DownloadOverlapAction = "create_new"
 	DO_IgnoreExisting	DownloadOverlapAction = "ignore_existing"
-)
-
-var (
-	ERR_NonRetrievable	= fmt.Errorf("Non retrievable resource.")
 )
 
 /* BookwormFTP Client type definition */
@@ -70,6 +72,7 @@ type Client struct {
 /* Instantiates a new client (IPv4 preferred), and takes all possible actions based on address url */
 func NewClient(address string) (client *Client, err error) {
 	var dir, system string
+	// TODO: IMpose a delay on connect to close the connection after 15 seconds if unable to resolve host/establish connection.
 
 	client, err = newClient(address, Address.IPvAny)
 
@@ -108,10 +111,7 @@ func NewClient(address string) (client *Client, err error) {
 	client.TransferMode(ClientCommands.TRANSFER_Stream)
 	client.FileStructure(ClientCommands.FILESTRUCT_File)
 
-	fmt.Println("Current dir to change to", dir)
-
 	if dir != EmptyString {
-		fmt.Println("Changes the directory, and it shold list the contents")
 		_, err = client.ChangeDir(dir)
 	} else {
 		_, err = client.List()
@@ -155,6 +155,12 @@ func (c *Client) Account(accountInfo string) (ok bool, err error) {
 /* Changes the current working directory on the host */
 func (c *Client) ChangeDir(path string) (ok bool, err error) {
 	var dir string
+
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
 	dir = c.path.ToCurrentDir(path)
 
 	if dir == c.path.GetCurrentDir() {
@@ -174,12 +180,17 @@ func (c *Client) ChangeDir(path string) (ok bool, err error) {
 }
 
 /* Changes the current working directory to it's container on the host */
-func (c *Client) ChangeToParentDir() (bool, error) {
+func (c *Client) ChangeToParentDir() (ok bool, err error) {
 	if c.path.InRootDir() {
 		return true, nil
 	}
 
-	ok, err := c.Commands.CDUP()
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
+	ok, err = c.Commands.CDUP()
 	if ok {
 		/* Keep track of the current working directory */
 		c.path.ChangeCurrentDir("./../")
@@ -193,8 +204,94 @@ func (c *Client) CurrentDir() string {
 	return c.path.GetCurrentDir()
 }
 
+/* Delete the specified resource */
+func (c *Client) Delete(resourcePath string) (ok bool, err error) {
+	var res *Resources.Resource
+	var navigateTo string
+	var navigated, currentDirRemoval bool
+	var originalPath string
+
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
+	/* Remember the current path */
+	originalPath = c.path.GetCurrentDir()
+
+	/* Check if the specified resource can represent a resource in the current directory */
+	if c.path.InCurrentDir(resourcePath) {
+		aux := c.path.ExtractSubPath(resourcePath)
+
+		/* Current directory deletion? */
+		if len(aux) == 0 {
+			res = c.Resources
+			currentDirRemoval = true
+		} else {
+			navigateTo = c.path.ToCurrentDir(resourcePath)
+		}
+	} else {
+		/* Resource in different directory */
+		if c.path.IsAbs(resourcePath) {
+			navigateTo = resourcePath
+		} else {
+			navigateTo = c.path.Join(c.path.GetCurrentDir(), resourcePath)
+		}
+	}
+
+	/* Path navigation is required to determine the specified resource's type and properties */
+	if nil == res {
+		/* Navigate to the resource container */
+		d, f := c.path.Split(navigateTo)
+
+		/* Navigate to the resource container */
+		ok, err = c.ChangeDir(d)
+		navigated = true
+
+		if !ok {
+			/* Unable to navigate to specified path */
+			return false, ERR_UnableToLocateRes
+		}
+
+		if f == EmptyString {
+			res = c.Resources
+		} else {
+			res = c.Resources.GetContentByName(f)
+
+			if res == nil {
+				return false, ERR_UnableToLocateRes
+			}
+		}
+	}
+
+	if res != nil {
+		if res.IsDir() {
+			/* Remove each file in the container */
+			ok, err = c.truncateDir(res)
+		} else {
+			/* Check if the specified file can be removed */
+			ok, err = c.deleteFile(res)
+		}
+	}
+
+	/* Restore the original path */
+	if navigated && ok {
+		ok, err = c.ChangeDir(originalPath)
+	} else if currentDirRemoval && ok {
+		/* Change to the parent directory */
+		ok, err = c.ChangeToParentDir()
+	}
+
+	return
+}
+
 /* Download the specified file */
 func (c *Client) Download(fileName string) (ok bool, err error) {
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
 	if !c.InPassiveMode() {
 		_, err = c.PassiveMode()
 		defer c.RestoreConnections();
@@ -231,6 +328,11 @@ func (c *Client) Download(fileName string) (ok bool, err error) {
 
 /* Extracts the server supported features map */
 func (c *Client) Features() (feat *Features.Features, err error) {
+	/* Check connection ready state before executing command */
+	if _, err = c.isReady(); err != nil {
+		return
+	}
+
 	if c.features == nil {
 		feat, err = c.Commands.FEAT()
 
@@ -246,6 +348,11 @@ func (c *Client) Features() (feat *Features.Features, err error) {
 
 /* Gives the ability to modify the currently used file structure (STRU) */
 func (c *Client) FileStructure(fileStructure string) (ok bool, err error) {
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
 	if c.settings.Get(OPT_FileStructure).Is(fileStructure) {
 		return true, nil
 	}
@@ -259,6 +366,16 @@ func (c *Client) FileStructure(fileStructure string) (ok bool, err error) {
 
 /* Request server to expose the user to the content's of the specified virtual host */
 func (c *Client) Host(virtualHost string) (bool, error) {
+	/* Check connection ready state before executing command */
+	if ok, err := c.isReady(); !ok {
+		if err != ERR_LoginRequired {
+			return ok, err
+		} else {
+			ok = true
+			err = nil
+		}
+	}
+
 	/* If a user is authenticated, try to reinitialize the connection */
 	if c.settings.Get(OPT_LoggedIn).Is(true) {
 		if ok, _ := c.Reinitialize(); !ok {
@@ -295,54 +412,19 @@ func (c *Client) ListFile(fileAndPath string) (*Resources.Resource, error) {
 	return c.list(c.path.ToCurrentDir(fileAndPath), true)
 }
 
-/* Uses one of the supported features to list a container's resources or the named resource's facts */
-func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err error) {
-	if !c.InPassiveMode() {
-		_, err = c.PassiveMode()
-		defer c.RestoreConnections();
-	}
-
-	if err == nil {
-		if !isFile {
-			/* Container listing */
-			if c.features.Supports("MLSD") {
-				res, err = c.Commands.MLSD(path)
-
-				if !c.Commands.LastIsImplemented() {
-					/* MLSD not supported, remove the feature from expected support and fallback on LIST */
-					c.features.RemoveFeature("MLSD")
-					return c.list(path, isFile)
-				}
-			} else if c.features.Supports("LIST") {
-				res, err = c.Commands.LIST(path)
-			}
-		} else {
-			/* Single resource listing */
-			if c.features.Supports("MLST") {
-				res, err = c.Commands.MLST(path)
-
-				if !c.Commands.LastIsImplemented() {
-					/* MLST not supported, remove the feature from expected support and fallback on LIST */
-					c.features.RemoveFeature("MLST")
-					return c.list(path, isFile)
-				}
-			} else if c.features.Supports("LIST") {
-				res, err = c.Commands.LIST(path)
-			}
-		}
-	}
-
-	if err == nil {
-		c.Resources = res
-		fmt.Println(res.GetContentByName("mirror"))
-	}
-
-	return
-}
-
 /* Log's in with client registered credentials (USER, PASS sequence) */
 func (c *Client) LogIn(credentials *Credentials.Credentials) (ok bool, err error) {
 	var modified int = -1
+
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		if err != ERR_LoginRequired {
+			return
+		} else {
+			ok = true
+			err = nil
+		}
+	}
 
 	if credentials == nil {
 		/* Fallback on existing credentials - if none encoded in the URL this will mean an anonymous login */
@@ -405,8 +487,38 @@ func (c *Client) PassiveModeEPSV() (bool, error) {
 	return c.passiveMode(true)
 }
 
+/* Close the current connection */
+func (c *Client) Quit() (quitMessage string, err error) {
+	if c.settings.Get(OPT_Disconnected).Is(false) {
+		/* Check connection ready state before executing command */
+		if _, err = c.isReady(); err != nil {
+			if err != ERR_LoginRequired {
+				return
+			} else {
+				err = nil
+			}
+		}
+
+		quitMessage, err = c.Commands.QUIT()
+
+		if err == nil {
+			c.settings.Get(OPT_Disconnected).Set(true)
+		}
+	} else {
+		/* Already disconnected */
+		return
+	}
+
+	return
+}
+
 /* Impose the specified representation type to the server */
-func (c *Client) RepresentationType(representationType string, typeParameter interface {}) (bool, error) {
+func (c *Client) RepresentationType(representationType string, typeParameter interface {}) (ok bool, err error) {
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
 	/* Do not request the server if neither the representation, nor the format changed */
 	if c.settings.Get(OPT_DataType).Is(representationType) {
 		if representationType == ClientCommands.TYPE_Ascii {
@@ -423,7 +535,7 @@ func (c *Client) RepresentationType(representationType string, typeParameter int
 		}
 	}
 
-	ok, err := c.Commands.TYPE(representationType, typeParameter)
+	ok, err = c.Commands.TYPE(representationType, typeParameter)
 
 	if ok {
 		if representationType == ClientCommands.TYPE_Ascii {
@@ -441,11 +553,16 @@ func (c *Client) RepresentationType(representationType string, typeParameter int
 		}
 	}
 
-	return ok, err
+	return
 }
 
 /* Connection reinitialization method (uses REIN) */
 func (c *Client) Reinitialize() (ok bool, err error) {
+	/* Check connection ready state before executing command */
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
 	if c.features.Supports("REIN") {
 		/* Connection reinitialization attempt */
 		if ok, err = c.Commands.REIN(); !ok {
@@ -491,17 +608,36 @@ func (c *Client) SetDownloadRuleCreateCopy() {
 }
 
 /* Gets the system type */
-func (c *Client) System() (string, error) {
-	return c.Commands.SYST()
+func (c *Client) System() (sys string, err error) {
+	/* Check connection ready state before executing command */
+	if _, err = c.isReady(); err != nil {
+		return
+	}
+
+	if !c.settings.Get(OPT_System).Is(EmptyString) {
+		return c.settings.Get(OPT_System).ToString(), nil
+	}
+
+	sys, err = c.Commands.SYST()
+	if err == nil {
+		c.settings.Get(OPT_System).Set(sys)
+	}
+
+	return
 }
 
 /* Gives the ability to define the desired data transfer mode */
-func (c *Client) TransferMode(mode string) (bool, error) {
+func (c *Client) TransferMode(mode string) (ok bool, err error) {
+	/* Check connection ready state before executing command */
+	if _, err = c.isReady(); err != nil {
+		return
+	}
+
 	if c.settings.Get(OPT_TransferMode).Is(mode) {
 		return true, nil
 	}
 
-	ok, err := c.Commands.MODE(mode)
+	ok, err = c.Commands.MODE(mode)
 	if ok {
 		c.settings.Get(OPT_TransferMode).Set(mode)
 	}
@@ -557,12 +693,14 @@ func newClient(address string, ipFamily int) (client *Client, err error) {
 			Settings.NewOption(OPT_ExtendedPassive, false),
 			Settings.NewOption(OPT_Account, EmptyString),
 			Settings.NewOption(OPT_AccountEnabled, false),
+			Settings.NewOption(OPT_System, EmptyString),
 			Settings.NewOption(OPT_TransferMode, ClientCommands.TRANSFER_Unspecified),
 			Settings.NewOption(OPT_DataType, ClientCommands.TYPE_Unspecified),
 			Settings.NewOption(OPT_FormatControl, ClientCommands.FMTCTRL_Unspecified),
 			Settings.NewOption(OPT_ByteSize, 8),
 			Settings.NewOption(OPT_FileStructure, ClientCommands.FILESTRUCT_Unspecified),
 			Settings.NewOption(OPT_DownloadOverlap, DO_IgnoreExisting),
+			Settings.NewOption(OPT_Disconnected, false),
 		), nil, nil, nil}
 
 		/* Initialize a local file manager based on the client current working dir (localy) */
@@ -621,6 +759,19 @@ func (c *Client) account(accountInfo string, afterREIN bool, fromLogIn bool) (ok
 			/* Mark the current account information as being registered */
 			c.settings.Get(OPT_AccountEnabled).Set(true)
 		}
+	}
+
+	return
+}
+
+/* Delete file */
+func (c *Client) deleteFile(res *Resources.Resource) (ok bool, err error) {
+	if res.IsFile() {
+		if !res.CanBeRemoved() {
+			return false, ERR_DeleteRights
+		}
+
+		ok, err = c.Commands.DELE(res.Name)
 	}
 
 	return
@@ -748,6 +899,69 @@ func (c *Client) downloadFile(file string) (ok bool, err error) {
 	return
 }
 
+/* Checks if the connection is ready to execute commands */
+func (c *Client) isReady() (ok bool, err error) {
+	if c.settings.Get(OPT_LoggedIn).Is(true) {
+		if c.settings.Get(OPT_Disconnected).Is(false) {
+			return true, nil
+		} else {
+			return false, ERR_Disconnected
+		}
+	}
+
+	return false, ERR_LoginRequired
+}
+
+/* Uses one of the supported features to list a container's resources or the named resource's facts */
+func (c *Client) list(path string, isFile bool) (res *Resources.Resource, err error) {
+	/* Check connection ready state before executing command */
+	if _, err = c.isReady(); err != nil {
+		return
+	}
+
+	if !c.InPassiveMode() {
+		_, err = c.PassiveMode()
+		defer c.RestoreConnections();
+	}
+
+	if err == nil {
+		if !isFile {
+			/* Container listing */
+			if c.features.Supports("MLSD") {
+				res, err = c.Commands.MLSD(path)
+
+				if !c.Commands.LastIsImplemented() {
+					/* MLSD not supported, remove the feature from expected support and fallback on LIST */
+					c.features.RemoveFeature("MLSD")
+					return c.list(path, isFile)
+				}
+			} else if c.features.Supports("LIST") {
+				res, err = c.Commands.LIST(path)
+			}
+		} else {
+			/* Single resource listing */
+			if c.features.Supports("MLST") {
+				res, err = c.Commands.MLST(path)
+
+				if !c.Commands.LastIsImplemented() {
+					/* MLST not supported, remove the feature from expected support and fallback on LIST */
+					c.features.RemoveFeature("MLST")
+					return c.list(path, isFile)
+				}
+			} else if c.features.Supports("LIST") {
+				res, err = c.Commands.LIST(path)
+			}
+		}
+	}
+
+	if err == nil {
+		c.Resources = res
+		fmt.Println(res.GetContentByName("mirror"))
+	}
+
+	return
+}
+
 /* Activates the passive mode if possible, and marks the internal options */
 func (c *Client) passiveMode(epsv bool) (ok bool, err error) {
 	if epsv {
@@ -763,6 +977,42 @@ func (c *Client) passiveMode(epsv bool) (ok bool, err error) {
 		if ok {
 			c.settings.Get(OPT_PassiveMode).Set(true)
 			c.settings.Get(OPT_ExtendedPassive).Reset()
+		}
+	}
+
+	return
+}
+
+/* Delete each file in the directory */
+func (c *Client) truncateDir(res *Resources.Resource) (ok bool, err error) {
+	var originalPath string = c.path.GetCurrentDir()
+
+	/* Check if the current directory can be purged */
+	if !res.CanBePurged() {
+		/* Not all files can be removed from the current dir */
+		return false, ERR_TruncateRights
+	}
+
+	for _, r := range res.Content {
+		if r.IsDir() {
+			/* Change to the specified path */
+			ok, err = c.ChangeDir(r.Name)
+
+			if ok {
+				ok, err = c.truncateDir(c.Resources)
+
+				if ok {
+					/* Restore to the initial path */
+					ok, err = c.ChangeDir(originalPath)
+				}
+			}
+		} else {
+			/* File removal */
+			ok, err = c.deleteFile(r)
+		}
+
+		if !ok {
+			break
 		}
 	}
 

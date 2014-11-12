@@ -198,6 +198,42 @@ func (p *PathManager) Ext(path string) string {
 	return FilePath.Ext(path)
 }
 
+/* Extracts the parent directory's path from the specified path */
+func (p *PathManager) ExtractParentDir(path string) string {
+	parts := p.SplitDirList(path)
+	length := len(parts)
+
+	if length > 0 {
+		if length > 1 {
+			/* Exclude any file from the path */
+			if !p.IsDir(parts[length - 1]) {
+				parts = parts[:length - 2]
+
+				return p.ExtractParentDir(p.Join(parts...))
+			}
+
+			return p.Join(parts[:length - 2]...)
+		}
+	}
+
+	return EmptyString
+}
+
+/* Extracts the current directory from the path, leaving a relative path without any relationship markers */
+func (p *PathManager) ExtractSubPath(path string) []string {
+	if p.InCurrentDir(path) {
+		l1 := len(p.GetCurrentDir())
+		l2 := len(path)
+
+		/* If it's the same directory ignore the case, we have nothing to return */
+		if l1 != l2 {
+			return p.SplitDirList(path[l2:])
+		}
+	}
+
+	return []string{}
+}
+
 /* Normalizes the current directory. */
 func (p *PathManager) _getCurrentDir() string {
 	if p.currentDir == EmptyString {
@@ -234,6 +270,48 @@ func (p *PathManager) IsAbs(path string) bool {
 	}
 
 	return FilePath.IsAbs(path)
+}
+
+/* Checks if the current path is a directory path */
+func (p *PathManager) IsDir(path string) bool {
+	return string(path[len(path) - 1]) == p.GetSeparator()
+}
+
+/* Checks if the specified path is the current directory */
+func (p *PathManager) IsCurrentDir(path string) bool {
+	return path == p.GetCurrentDir()
+}
+
+/* Checks if the specified path is in the current directory */
+func (p *PathManager) InCurrentDir(path string) bool {
+	if p.IsCurrentDir(path) {
+		return true
+	}
+
+	curr := p.GetCurrentDir()
+
+	if !p.IsAbs(path) {
+		/* Relative path. Try a concatenation, if the resulting dir is not the current directory, dump the path as a negative */
+		d, _ := p.Split(p.Join(curr, path))
+
+		if d == curr {
+			return true
+		}
+	} else {
+		/* Absolute path. Check if the specified path overlaps the specified path entirely */
+		l1 := len(curr)
+		l2 := len(path)
+
+		if l1 < l2 {
+			/* The current path has to be either a subdirectory or a non related path at this point */
+			if path[:l1 - 1] == curr {
+				/* This is a path descending from the current path */
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 /* Checks if the current dir is the root dir */
@@ -384,6 +462,11 @@ func (p *PathManager) ToCurrentDir(fileName string) string {
 			/* There is no relationship between the specified path and the current directory, just add the file to the current directory */
 			return p.GetCurrentDir() + file
 		}
+	}
+
+	/* Remove local path from directory concatenation */
+	if dir == ("." + p.GetSeparator()) {
+		dir = ""
 	}
 
 	dir = p.GetCurrentDir() + dir
