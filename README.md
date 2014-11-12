@@ -49,12 +49,9 @@ To establish the current connection in a fully functional connection, at least a
 
 * <b>LogIn</b>: authenticate with specified credentials throw the usage of <b>LogIn</b> method. If the required credentials are provided in the URL, the method can be used with a nil parameter, a fallback to the parsed Credentials structure is being made. If however you wold like to provide the credentials manually, it can be done throw initialization of a local Credentials structure (<b>/core/credentials</b> package). If for any reasons the connection will have to reset using other credentials, a Login with the new Credentials structure can be used, it will take care of connection reinitialization (<b>REIN</b>). 
 * <b>Feature detection:</b> the client has to know server supported feature before usage. This can be done using the <b>Features()</b> client method.
-* <b>Determine the server side current directory</b>: Required step if the initial client path differs from the default root directory <b>/</b>
+* <b>Determine the server side current directory</b>: Required step if the initial client path differs from the default root directory <b>/</b>.
 
-
-    /*
-     * Manual initialization of an IPv4 connection to the server
-     */
+   /* Manual initialization of an IPv4 connection to the server */
     c, err := Client.NewIPv4("URL")
     
     /* Set the client account data */
@@ -74,7 +71,6 @@ To establish the current connection in a fully functional connection, at least a
     
     /* Login (will take account information into account if requested by server) */
     c.LogIn(credentials)
-
 ###Downloading
 ####Fast download
 If your only requirement is to download a specific file or recursively an entire directory and all it's contents, you can establish a client instance specifically for this purpose using .NewDownload("URL"). This builder reuses .NewClient and will try to establish a new connection on first available IPv.
