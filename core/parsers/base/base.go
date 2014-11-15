@@ -116,6 +116,14 @@ func StringContains(raw string, needle string) bool {
 	return bytes.Contains(r, n)
 }
 
+func BytesContain(raw []byte, needle []byte) bool {
+	return bytes.Contains(raw, needle)
+}
+
+func Join(separator []byte, parts [][]byte) []byte {
+	return bytes.Join(parts, separator)
+}
+
 func ToLower(raw []byte) []byte {
 	return bytes.ToLower(raw)
 }

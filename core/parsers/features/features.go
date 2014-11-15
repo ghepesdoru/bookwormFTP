@@ -82,6 +82,25 @@ func (f *Features) HasFeatures() bool {
 	return f.hasFeatures
 }
 
+func (f *Features) GetLanguagesList() (languages []string) {
+	var separator, selected, empty []byte = []byte(";"), []byte("*"), []byte("")
+
+	if f.Supports("LANG") {
+		langs, _ := f.GetParameters("LANG")
+
+		for _, lang := range BaseParser.SplitOnSeparator([]byte(langs), separator) {
+
+			if BaseParser.BytesContain(lang, selected) {
+				lang = BaseParser.Join(empty, BaseParser.SplitOnSeparator(lang, selected))
+			}
+
+			languages = append(languages, string(lang))
+		}
+	}
+
+	return
+}
+
 /* Removes the specified feature from the current features set */
 func (f *Features) RemoveFeature(feature string) {
 	if f.Supports(feature) {

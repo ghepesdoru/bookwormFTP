@@ -48,6 +48,13 @@ var (
 	ERR_NonRetrievable		 = fmt.Errorf("Non retrievable resource.")
 	ERR_Disconnected		 = fmt.Errorf("Unable to execute specified command, the connection is disconnected.")
 	ERR_LoginRequired		 = fmt.Errorf("Unable to execute specified command, the connection is not authenticated.")
+	ERR_RenameNotImplemented = fmt.Errorf("Resource rename not supported at server side.")
+	ERR_MKDNotImplemented	 = fmt.Errorf("Make directory not supported at server side.")
+	ERR_OPTSNotImplemented   = fmt.Errorf("Command options specification not supported at server side.")
+	ERR_LANGNotImplemented	 = fmt.Errorf("Language modification not supported at server side.")
+	ERR_HELPNotImplemented	 = fmt.Errorf("Help suggestions not implemented at server side.")
+	ERR_LangNotSupported	 = fmt.Errorf("Language not supported")
+	ERR_NoLanguageSupport	 = fmt.Errorf("No language packs are available at server side.")
 )
 
 type DownloadOverlapAction string
@@ -134,6 +141,14 @@ func NewDownload(address string) (client *Client, err error) {
 	/* Download the specified file or directory */
 	_, file := client.requester.GetInitialPath()
 	_, err = client.Download(file)
+
+	if err != nil {
+		defer client.Quit()
+	} else {
+		/* Quit the server connection */
+		_, err = client.Quit()
+	}
+
 	return
 }
 
@@ -364,6 +379,24 @@ func (c *Client) FileStructure(fileStructure string) (ok bool, err error) {
 	return ok, err
 }
 
+func (c *Client) Help() (string, error) {
+	return c.HelpWith(EmptyString)
+}
+
+func (c *Client) HelpWith(subject string) (helpMessage string, err error) {
+	if _, err = c.isReady(); err != nil {
+		return
+	}
+
+	if !c.features.Supports("HELP") {
+		err = ERR_HELPNotImplemented
+	} else {
+		helpMessage, err = c.Commands.HELP(subject)
+	}
+
+	return
+}
+
 /* Request server to expose the user to the content's of the specified virtual host */
 func (c *Client) Host(virtualHost string) (bool, error) {
 	/* Check connection ready state before executing command */
@@ -395,6 +428,55 @@ func (c *Client) InPassiveMode() bool {
 /* Checks if the current client established a connection using IP version 4 */
 func (c *Client) IsIPv4() bool {
 	return c.requester.GetHostAddr().IPFamily == Address.IPv4
+}
+
+/* Set the client language in use */
+func (c *Client) Language(language string) (ok bool, err error) {
+	var langs []string
+	var supported bool
+
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
+	if !c.features.Supports("LANG") {
+		err = ERR_LANGNotImplemented
+	}
+
+	langs, err = c.LanguagesSupported()
+
+	if err != nil {
+		return
+	}
+
+	for _, l := range langs {
+		if l == language {
+			supported = true
+		}
+	}
+
+	if supported {
+		c.Commands.LANG(language)
+	} else {
+		err = ERR_LangNotSupported
+	}
+
+	return
+}
+
+/* Gets the list of supported languages */
+func (c *Client) LanguagesSupported() (languages []string, err error) {
+	if _, err = c.isReady(); err != nil {
+		return
+	}
+
+	languages = c.features.GetLanguagesList()
+
+	if len(languages) == 0 {
+		err = ERR_NoLanguageSupport
+	}
+
+	return
 }
 
 /* Lists the contents of the current directory */
@@ -475,6 +557,68 @@ func (c *Client) LogIn(credentials *Credentials.Credentials) (ok bool, err error
 	}
 
 	return
+}
+
+/* Creates a new directory in the current working directory, or recreate the specified path */
+func (c *Client) MakeDirectory(dirName string) (ok bool, err error) {
+	var creationPath []string
+	var originalPath string
+
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
+	if !c.features.Supports("MKD") {
+		err = ERR_MKDNotImplemented
+		return
+	}
+
+	/* Assume the any relative path as part of the current directory's sub path */
+	originalPath = c.CurrentDir()
+	if !c.path.IsAbs(dirName) {
+		dirName = c.path.ToCurrentDir(dirName)
+	}
+
+	if c.path.InCurrentDir(dirName) {
+		creationPath = c.path.ExtractSubPath(dirName)
+	} else {
+		creationPath = c.path.SplitDirList(dirName)
+	}
+
+	/* Recreate the entire specified path */
+	for _, d := range creationPath {
+		if !c.Resources.ContainsByName(d) {
+			if ok, err = c.Commands.MKD(d); !ok {
+				break
+			}
+		}
+
+		/* Change to the existing directory with the specified name */
+		if ok, err = c.ChangeDir(d); !ok {
+			break
+		}
+	}
+
+	if len(creationPath) > 0 {
+		/* Restore the initial path */
+		c.ChangeDir(originalPath)
+	}
+
+	return
+}
+
+/* Allows customizing the specified command with required options */
+func (c *Client) Options(command, option string) (ok bool, err error) {
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
+	if !c.features.Supports("OPTS") {
+		err = ERR_OPTSNotImplemented
+		return
+	}
+
+	return c.Commands.OPTS(command, option)
 }
 
 /* Puts the client in passive mode, and makes the client ready for accessing the data connection */
@@ -581,6 +725,63 @@ func (c *Client) Reinitialize() (ok bool, err error) {
 		/* Restart all affected connection settings */
 		c.settings.Get(OPT_LoggedIn).Reset()
 		c.settings.Get(OPT_AccountEnabled).Reset()
+	}
+
+	return
+}
+
+/* Rename the specified resource */
+func (c *Client) Rename(resourceName string, renameTo string) (ok bool, err error) {
+	var resName, originalPath string
+
+	if ok, err = c.isReady(); !ok {
+		return
+	}
+
+	if c.features.Supports("RNFR") && c.features.Supports("RNTO") {
+		if !c.path.IsAbs(resourceName) {
+			/* Relative path or resource name */
+			if resName = c.path.SplitFile(resourceName); resName == EmptyString {
+				resName = c.path.SplitDir(resourceName)
+			}
+		} else {
+			/* Change to the specified path if possible and rename the resource in the specified context */
+			originalPath = c.CurrentDir()
+
+			if resName = c.path.SplitFile(resourceName); resName == EmptyString {
+				aux := c.path.SplitDirList(resourceName)
+				if len(aux) > 0 {
+					resName = aux[len(aux) - 1]
+				}
+
+				ok, err = c.ChangeDir(c.path.Join(aux...))
+			} else {
+				ok, err = c.ChangeDir(c.path.SplitDir(resourceName))
+			}
+
+			if !ok {
+				return
+			}
+		}
+
+		if resName != EmptyString {
+			err = ERR_UnableToLocateRes
+		} else {
+			/* Rename the specified resource */
+			_, command := c.requester.Sequence(
+				ClientCommands.NewCommand("rnfr", resName, Status.FileActionPending),
+				ClientCommands.NewCommand("rnto", renameTo, Status.FileActionOk),
+			)
+
+			ok, err = command.Success(), command.LastError()
+		}
+	} else {
+		err = ERR_RenameNotImplemented
+	}
+
+	/* Restore the original path */
+	if originalPath != EmptyString {
+		c.ChangeDir(originalPath)
 	}
 
 	return
