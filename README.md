@@ -1,10 +1,10 @@
-#BookwormFTP
-##BookwormFTP Client (github.com/ghepesdoru/bookwormFTP/client)
+# BookwormFTP
+## BookwormFTP Client (github.com/ghepesdoru/bookwormFTP/client)
 BookwormFTP Client is FTP client that can serve as a quick download/upload solution in your application. The client is constructed around BookwormFTP building blocks and will take care of server control and data connections, file downloads in specified downloads directory, credentials etc. 
 The client will try it's best to enforce most recent available features as described by the server's FEAT response, but will automatically remove any optional feature if the server responds with a 502 (Not implemented) or 202 (Command not implemented) reply codes.
 
-###Client Initialization
-####Default client instantiation
+### Client Initialization
+#### Default client instantiation
 Default client initialization is made throw the usage of <b>.NewClient("URL")</b> and will return the first encountered error or a reference to the connected client. 
 While connecting the client will execute a series of commands based on the specific context:
 
@@ -42,7 +42,7 @@ func main() {
 }
 ```
 
-####Custom client initialization to specify account and virtual host
+#### Custom client initialization to specify account and virtual host
 If the requested connection requires an account or virtual host specified for a valid connection, a manual client initialization is required. You can use either one of the IP version specific builders, and initialize a new client, then specify the account using the client's <b>Account</b> method and a virtual host throw the usage of client's <b>Host</b> method.
 
 The manual initialization won't execute any of the default client commands at initialization time giving the full flexibility of a totally custom connection.
@@ -73,8 +73,8 @@ if err != nil {
 /* Login (will take account information into account if requested by server) */
 c.LogIn(credentials)
  ```
-###Downloading
-####Fast download
+### Downloading
+#### Fast download
 If your only requirement is to download a specific file or recursively an entire directory and all it's contents, you can establish a client instance specifically for this purpose using .NewDownload("URL"). This builder reuses .NewClient and will try to establish a new connection on first available IPv.
 ```
 /* 
@@ -85,21 +85,21 @@ If your only requirement is to download a specific file or recursively an entire
 */
 c, err := Client.NewDownload("ftp.mozilla.org/pub/mozilla.org/")
 ```
-####Download with an initialized client
+#### Download with an initialized client
 Any client can download at any time any specified resource (file or directory) at any time. 
     
     /* Download the resource */
     ok, err = c.Download("resourceName")
      
     
-###File and directory removal
+### File and directory removal
 At any point, using any initialized client, any resource from any path can be removed using the client's method <b>Delete</b>()
 ```
 /* Delete the resource by it's path (being it relative or absolute) */
 ok, err = c.Delete("resourceNameOrPath")
 ```
-##Advanced usage cases
-###Unmanaged commands
+## Advanced usage cases
+### Unmanaged commands
 If you require to use any of the commands not externalized by the client, direct command querying is possible throw the usage of .Commands. Most commands will reply with a success execution flag and the eventual error in case of failure, but each command that should return a meaning full reply will do this in plain string or throw one of the core library types (for example FEAT will return a Features structure, LIST and MLSD will return a Resource structure, etc.)
 ```
 /* Manual commands invocation examples  */
